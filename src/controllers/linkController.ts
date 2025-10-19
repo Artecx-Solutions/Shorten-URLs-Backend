@@ -55,6 +55,8 @@ export const createShortLink = async (
   try {
     const { originalUrl, customAlias } = req.body;
 
+    console.log(req.body)
+
     // Normalize URL for better duplicate detection
     const normalizedUrl = originalUrl.trim().toLowerCase();
 

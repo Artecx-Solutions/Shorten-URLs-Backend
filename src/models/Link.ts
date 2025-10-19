@@ -1,9 +1,19 @@
+// models/Link.ts
 import mongoose, { Document, Schema } from 'mongoose';
-import shortid from 'shortid';
 import validator from 'validator';
-import { ILink } from '../types/link';
 
-export interface ILinkDocument extends ILink, Document {}
+export interface ILinkDocument extends Document {
+  originalUrl: string;
+  shortCode: string;
+  customAlias?: string;
+  clicks: number;
+  createdAt: Date;
+  createdBy: mongoose.Types.ObjectId | 'anonymous'; // Allow string or ObjectId
+  expiresAt: Date;
+  isActive: boolean;
+  title?: string;
+  description?: string;
+}
 
 const linkSchema = new Schema<ILinkDocument>({
   originalUrl: {
@@ -21,14 +31,11 @@ const linkSchema = new Schema<ILinkDocument>({
   shortCode: {
     type: String,
     required: true,
-    unique: true,
-    default: shortid.generate,
-    match: [/^[a-zA-Z0-9_-]+$/, 'Short code can only contain letters, numbers, underscores, and hyphens']
+    unique: true
   },
   customAlias: {
     type: String,
-    sparse: true,
-    match: [/^[a-zA-Z0-9_-]+$/, 'Custom alias can only contain letters, numbers, underscores, and hyphens']
+    sparse: true
   },
   clicks: {
     type: Number,
@@ -39,7 +46,7 @@ const linkSchema = new Schema<ILinkDocument>({
     default: Date.now
   },
   createdBy: {
-    type: String,
+    type: Schema.Types.Mixed, // Use Mixed type to allow both ObjectId and string
     default: 'anonymous'
   },
   expiresAt: {
@@ -49,12 +56,20 @@ const linkSchema = new Schema<ILinkDocument>({
   isActive: {
     type: Boolean,
     default: true
+  },
+  title: {
+    type: String,
+    maxlength: [100, 'Title cannot be more than 100 characters']
+  },
+  description: {
+    type: String,
+    maxlength: [500, 'Description cannot be more than 500 characters']
   }
 });
 
 // Indexes
-linkSchema.index({ shortCode: 1, isActive: 1 });
+linkSchema.index({ shortCode: 1 });
 linkSchema.index({ createdAt: -1 });
-linkSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+linkSchema.index({ createdBy: 1, createdAt: -1 });
 
 export const Link = mongoose.model<ILinkDocument>('Link', linkSchema);

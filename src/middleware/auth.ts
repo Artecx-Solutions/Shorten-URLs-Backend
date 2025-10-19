@@ -1,53 +1,68 @@
+// middleware/auth.ts
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import { JwtPayload } from '../types/auth';
+import { User, IUser } from '../models/User';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
-
-// Extend Express Request type to include user
-declare global {
-  namespace Express {
-    interface Request {
-      user?: JwtPayload;
-    }
-  }
+export interface AuthRequest extends Request {
+  user?: IUser;
 }
 
-export const auth = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+export const auth = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    const token = req.header('Authorization')?.replace('Bearer ', '');
-
-    if (!token) {
-      res.status(401).json({
-        success: false,
-        message: 'No token provided, access denied'
-      });
-      return;
+    // Check multiple possible token locations
+    let token = req.header('Authorization')?.replace('Bearer ', '');
+    
+    // If not in Authorization header, check cookies or query string
+    if (!token && req.cookies?.token) {
+      token = req.cookies.token;
+    }
+    
+    if (!token && req.query?.token) {
+      token = req.query.token as string;
     }
 
-    const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
-    req.user = decoded;
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        message: 'Access denied. No token provided.'
+      });
+    }
+
+    // Verify token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET!) as any;
+    
+    // Find user and include password field if needed
+    const user = await User.findById(decoded.userId || decoded.id);
+    
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Token is not valid - user not found'
+      });
+    }
+
+    req.user = user;
     next();
   } catch (error) {
+    console.error('Auth middleware error:', error);
+    
+    if (error instanceof jwt.JsonWebTokenError) {
+      return res.status(401).json({
+        success: false,
+        message: 'Token is not valid - invalid signature'
+      });
+    }
+    
+    if (error instanceof jwt.TokenExpiredError) {
+      return res.status(401).json({
+        success: false,
+        message: 'Token is not valid - expired'
+      });
+    }
+
     res.status(401).json({
       success: false,
       message: 'Token is not valid'
     });
-  }
-};
-
-export const optionalAuth = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-  try {
-    const token = req.header('Authorization')?.replace('Bearer ', '');
-
-    if (token) {
-      const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
-      req.user = decoded;
-    }
-    
-    next();
-  } catch (error) {
-    // If token is invalid, just continue without user
-    next();
   }
 };

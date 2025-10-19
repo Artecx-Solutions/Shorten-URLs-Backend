@@ -1,3 +1,4 @@
+// app.ts
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -19,8 +20,8 @@ app.use(cors());
 app.use(express.json());
 
 // Routes
-app.use('/api/links', linkRoutes);
-app.use('/api/auth', authRoutes); // Add auth routes
+app.use('/api/links', linkRoutes); // All URL operations now go through links
+app.use('/api/auth', authRoutes);
 
 // Health check with DB status
 app.get('/health', async (_req, res) => {
@@ -35,15 +36,42 @@ app.get('/health', async (_req, res) => {
   });
 });
 
+// Test route to verify all endpoints
+app.get('/api/test', (req, res) => {
+  res.json({ 
+    message: 'Backend is working!', 
+    timestamp: new Date().toISOString(),
+    availableRoutes: [
+      '/api/auth/login',
+      '/api/auth/signup', 
+      '/api/auth/me',
+      '/api/links/shorten', // Now using links for shortening
+      '/api/links/my-links',
+      '/api/links/analytics/:shortCode',
+      '/api/links/:shortCode'
+    ]
+  });
+});
+
 // Basic route without DB dependency
 app.get('/', (req, res) => {
   res.json({ 
     message: 'Link Shortener API is running!',
     database: 'Check /health for database status',
     endpoints: {
-      createLink: 'POST /api/links/shorten',
-      redirect: 'GET /:shortCode', 
-      analytics: 'GET /api/links/analytics/:shortCode'
+      auth: {
+        login: 'POST /api/auth/login',
+        signup: 'POST /api/auth/signup',
+        getProfile: 'GET /api/auth/me'
+      },
+      links: {
+        createLink: 'POST /api/links/shorten', // Updated to use links route
+        getUserLinks: 'GET /api/links/my-links',
+        getAnalytics: 'GET /api/links/analytics/:shortCode',
+        deleteLink: 'DELETE /api/links/:shortCode',
+        getLinkInfo: 'GET /api/links/:shortCode'
+      },
+      redirect: 'GET /redirect/:shortCode'
     }
   });
 });
@@ -61,7 +89,10 @@ const startServer = async (): Promise<void> => {
       console.log(`\n🎉 Link Shortener Backend Started!`);
       console.log(`📍 Local: http://localhost:${PORT}`);
       console.log(`🔍 Health: http://localhost:${PORT}/health`);
-      console.log(`📊 API: http://localhost:${PORT}/api/links`);
+      console.log(`🧪 Test: http://localhost:${PORT}/api/test`);
+      console.log(`\n📊 Available Routes:`);
+      console.log(`   🔐 Auth: http://localhost:${PORT}/api/auth`);
+      console.log(`   🔗 Links: http://localhost:${PORT}/api/links (includes URL shortening)`);
     });
     
   } catch (error) {
