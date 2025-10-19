@@ -1,20 +1,21 @@
-import { Router } from 'express';
+import express from 'express';
+import { auth } from '../middleware/auth';
 import {
   createShortLink,
-  redirectToOriginalUrl,
   getLinkAnalytics,
   getLinkForDelay,
-  getUserLinks
+  getUserLinks,
+  getLinkInfo,
+  deleteLink
 } from '../controllers/linkController';
-import { validateCreateLink } from '../middleware/validation';
-import { auth, optionalAuth } from '../middleware/auth';
 
-const router = Router();
+const router = express.Router();
 
-router.post('/shorten', optionalAuth, validateCreateLink, createShortLink);
-router.get('/user/links', auth, getUserLinks); // Add user links route
-router.get('/:shortCode', redirectToOriginalUrl);
-router.get('/analytics/:shortCode', getLinkAnalytics);
+router.post('/shorten', createShortLink);
 router.get('/delay/:shortCode', getLinkForDelay);
+router.get('/:shortCode', getLinkInfo);
+router.get('/analytics/:shortCode', auth, getLinkAnalytics);
+router.get('/my-links', auth, getUserLinks);
+router.delete('/:shortCode', auth, deleteLink);
 
 export default router;

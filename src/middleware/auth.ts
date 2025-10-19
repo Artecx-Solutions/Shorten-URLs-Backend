@@ -1,55 +1,34 @@
 import { Request, Response, NextFunction } from 'express';
-import jwt from 'jsonwebtoken';
-import { JwtPayload } from '../types/auth';
+import * as jwt from 'jsonwebtoken';
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+const JWT_SECRET = (process.env.JWT_SECRET || 'dev-secret') as jwt.Secret;
 
-// Extend Express Request type to include user (runtime attach)
-declare global {
-  namespace Express {
-    interface Request {
-      user?: JwtPayload;
-    }
+type TokenPayload = jwt.JwtPayload & { userId?: string; email?: string };
+
+export const auth = (req: Request, res: Response, next: NextFunction) => {
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : undefined;
+
+  if (!token) {
+    return res.status(401).json({ success: false, message: 'No token provided' });
   }
-}
 
-export const auth = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const token = req.header('Authorization')?.replace('Bearer ', '');
+    const decoded = jwt.verify(token, JWT_SECRET) as TokenPayload;
 
-    if (!token) {
-      res.status(401).json({
-        success: false,
-        message: 'No token provided, access denied',
-      });
-      return;
+    if (!decoded || !decoded.email) {
+      return res.status(401).json({ success: false, message: 'Invalid token' });
     }
 
-    const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
-    req.user = decoded;
-    next();
-  } catch (_error) {
-    res.status(401).json({
-      success: false,
-      message: 'Token is not valid',
-    });
-  }
-};
+    const authUser: { _id: string; email: string; userId?: string } = {
+      _id: decoded.userId ?? '',
+      email: decoded.email,
+    };
+    if (decoded.userId) authUser.userId = decoded.userId; 
 
-export const optionalAuth = async (
-  req: Request,
-  _res: Response,
-  next: NextFunction
-): Promise<void> => {
-  try {
-    const token = req.header('Authorization')?.replace('Bearer ', '');
-    if (token) {
-      const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
-      req.user = decoded;
-    }
-    next();
+    req.user = authUser;
+    return next();
   } catch {
-    // If token is invalid or missing, continue without user
-    next();
+    return res.status(401).json({ success: false, message: 'Invalid token' });
   }
 };
