@@ -36,13 +36,13 @@ app.get('/health', async (_req, res) => {
 });
 
 // Basic route without DB dependency
-app.get('/', (req, res) => {
-  res.json({ 
+app.get('/', (_req, res) => {
+  res.json({
     message: 'Link Shortener API is running!',
     database: 'Check /health for database status',
     endpoints: {
       createLink: 'POST /api/links/shorten',
-      redirect: 'GET /:shortCode', 
+      redirect: 'GET /:shortCode',
       analytics: 'GET /api/links/analytics/:shortCode'
     }
   });

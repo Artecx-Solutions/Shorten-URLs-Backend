@@ -4,7 +4,7 @@ import { JwtPayload } from '../types/auth';
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 
-// Extend Express Request type to include user
+// Extend Express Request type to include user (runtime attach)
 declare global {
   namespace Express {
     interface Request {
@@ -20,7 +20,7 @@ export const auth = async (req: Request, res: Response, next: NextFunction): Pro
     if (!token) {
       res.status(401).json({
         success: false,
-        message: 'No token provided, access denied'
+        message: 'No token provided, access denied',
       });
       return;
     }
@@ -28,26 +28,28 @@ export const auth = async (req: Request, res: Response, next: NextFunction): Pro
     const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
     req.user = decoded;
     next();
-  } catch (error) {
+  } catch (_error) {
     res.status(401).json({
       success: false,
-      message: 'Token is not valid'
+      message: 'Token is not valid',
     });
   }
 };
 
-export const optionalAuth = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+export const optionalAuth = async (
+  req: Request,
+  _res: Response,
+  next: NextFunction
+): Promise<void> => {
   try {
     const token = req.header('Authorization')?.replace('Bearer ', '');
-
     if (token) {
       const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload;
       req.user = decoded;
     }
-    
     next();
-  } catch (error) {
-    // If token is invalid, just continue without user
+  } catch {
+    // If token is invalid or missing, continue without user
     next();
   }
 };

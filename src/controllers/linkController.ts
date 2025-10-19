@@ -1,10 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
-import { Link } from '../models/Link';
-import { CreateLinkRequest, CreateLinkResponse, LinkAnalytics } from '../types/link';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
+import { Link } from '../models/Link';
+import { CreateLinkRequest, CreateLinkResponse, LinkAnalytics } from '../types/link';
 
-// Add this interface for metadata
+// With exactOptionalPropertyTypes, keep these truly optional
 interface PageMetadata {
   title?: string;
   description?: string;
@@ -12,41 +12,46 @@ interface PageMetadata {
   image?: string;
 }
 
-// Helper function to fetch page metadata
+const trim = (v?: string) => (typeof v === 'string' ? v.trim() : undefined);
+
+// Helper to fetch Open Graph / meta tags
 const fetchPageMetadata = async (url: string): Promise<PageMetadata> => {
   try {
     const response = await axios.get(url, {
       timeout: 5000,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; LinkShortener/1.0)'
-      }
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; LinkShortener/1.0)' },
     });
-    
+
     const $ = cheerio.load(response.data);
-    
+
+    const rawTitle =
+      $('title').text() || $('meta[property="og:title"]').attr('content');
+    const rawDescription =
+      $('meta[name="description"]').attr('content') ||
+      $('meta[property="og:description"]').attr('content');
+    const rawKeywords = $('meta[name="keywords"]').attr('content');
+    const rawImage = $('meta[property="og:image"]').attr('content');
+
+    const title = trim(rawTitle);
+    const description = trim(rawDescription);
+    const keywords = trim(rawKeywords);
+    const image = trim(rawImage);
+
+    // Only include keys that are defined (no `undefined` assigned to present keys)
     const metadata: PageMetadata = {
-      title: $('title').text() || $('meta[property="og:title"]').attr('content'),
-      description: $('meta[name="description"]').attr('content') || 
-                   $('meta[property="og:description"]').attr('content'),
-      keywords: $('meta[name="keywords"]').attr('content'),
-      image: $('meta[property="og:image"]').attr('content')
+      ...(title ? { title } : {}),
+      ...(description ? { description } : {}),
+      ...(keywords ? { keywords } : {}),
+      ...(image ? { image } : {}),
     };
 
-    // Clean up the data
-    Object.keys(metadata).forEach(key => {
-      if (metadata[key as keyof PageMetadata]) {
-        metadata[key as keyof PageMetadata] = metadata[key as keyof PageMetadata]?.trim();
-      }
-    });
-
     return metadata;
-  } catch (error) {
-    console.error('Error fetching page metadata:', error);
+  } catch {
     return {};
   }
 };
 
-// Update the createShortLink function to include user
+// Create short link (optionally scoped to a user)
 export const createShortLink = async (
   req: Request<{}, {}, CreateLinkRequest>,
   res: Response<CreateLinkResponse | { error: string }>,
@@ -55,10 +60,8 @@ export const createShortLink = async (
   try {
     const { originalUrl, customAlias } = req.body;
 
-    // Normalize URL for better duplicate detection
-    const normalizedUrl = originalUrl.trim().toLowerCase();
+    const normalizedUrl = originalUrl.trim();
 
-    // Check if custom alias exists (regardless of URL)
     if (customAlias) {
       const existingAlias = await Link.findOne({ shortCode: customAlias });
       if (existingAlias) {
@@ -67,40 +70,38 @@ export const createShortLink = async (
       }
     }
 
-    // Check for existing links with the same URL for this user
-    const existingLinksQuery: any = { 
-      originalUrl: { $regex: new RegExp(`^${normalizedUrl}$`, 'i') }
+    const existingLinksQuery: Record<string, any> = {
+      // exact match, case-insensitive; escape regex specials
+      originalUrl: new RegExp(
+        `^${normalizedUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
+        'i'
+      ),
     };
 
-    // If user is logged in, only check their links
-    if (req.user) {
+    if (req.user?.userId) {
       existingLinksQuery.createdBy = req.user.userId;
     } else {
-      // For anonymous users, only check links without user
-      existingLinksQuery.createdBy = null;
+      // treat anonymous matches
+      existingLinksQuery.createdBy = { $in: [null, 'anonymous'] };
     }
 
-    const existingLinks = await Link.find(existingLinksQuery);
-
-    if (existingLinks.length > 0) {
-      // Return existing link
-      const existingLink = existingLinks[0];
+    const existingLink = await Link.findOne(existingLinksQuery);
+    if (existingLink) {
       const response: CreateLinkResponse = {
         shortUrl: `${req.protocol}://${req.get('host')}/${existingLink.shortCode}`,
         originalUrl: existingLink.originalUrl,
         shortCode: existingLink.shortCode,
         clicks: existingLink.clicks,
-        message: 'Existing short link found for this URL'
+        message: 'Existing short link found for this URL',
       };
       res.status(200).json(response);
       return;
     }
 
-    // Create new link
     const link = new Link({
       originalUrl: normalizedUrl,
-      customAlias: customAlias || undefined,
-      createdBy: req.user?.userId || null
+      shortCode: customAlias || undefined,
+      createdBy: req.user?.userId ?? undefined, // omit for anonymous if your schema defaults it
     });
 
     await link.save();
@@ -109,7 +110,7 @@ export const createShortLink = async (
       shortUrl: `${req.protocol}://${req.get('host')}/${link.shortCode}`,
       originalUrl: link.originalUrl,
       shortCode: link.shortCode,
-      clicks: link.clicks
+      clicks: link.clicks,
     };
 
     res.status(201).json(response);
@@ -126,17 +127,12 @@ export const redirectToOriginalUrl = async (
   try {
     const { shortCode } = req.params;
 
-    const link = await Link.findOne({ 
-      shortCode,
-      isActive: true 
-    });
-
+    const link = await Link.findOne({ shortCode, isActive: true });
     if (!link) {
       res.status(404).json({ error: 'Link not found' });
       return;
     }
 
-    // Update click count
     link.clicks += 1;
     await link.save();
 
@@ -155,7 +151,6 @@ export const getLinkAnalytics = async (
     const { shortCode } = req.params;
 
     const link = await Link.findOne({ shortCode });
-    
     if (!link) {
       res.status(404).json({ error: 'Link not found' });
       return;
@@ -166,7 +161,7 @@ export const getLinkAnalytics = async (
       shortCode: link.shortCode,
       clicks: link.clicks,
       createdAt: link.createdAt,
-      isActive: link.isActive
+      isActive: link.isActive,
     };
 
     res.json(analytics);
@@ -183,18 +178,13 @@ export const getLinkForDelay = async (
   try {
     const { shortCode } = req.params;
 
-    const link = await Link.findOne({ 
-      shortCode,
-      isActive: true 
-    });
-
+    const link = await Link.findOne({ shortCode, isActive: true });
     if (!link) {
       res.status(404).json({ error: 'Link not found' });
       return;
     }
 
-    // Fetch metadata from the original URL
-    const metadata = await fetchPageMetadata(link.originalUrl);
+    const md = await fetchPageMetadata(link.originalUrl);
 
     const analytics: LinkAnalytics & { metadata?: PageMetadata } = {
       originalUrl: link.originalUrl,
@@ -202,8 +192,11 @@ export const getLinkForDelay = async (
       clicks: link.clicks,
       createdAt: link.createdAt,
       isActive: link.isActive,
-      metadata: Object.keys(metadata).length > 0 ? metadata : undefined
     };
+
+    if (Object.keys(md).length > 0) {
+      analytics.metadata = md;
+    }
 
     res.json(analytics);
   } catch (error) {
@@ -211,24 +204,27 @@ export const getLinkForDelay = async (
   }
 };
 
-
-// Add function to get user's links
+// Paginated list of a user's links
 export const getUserLinks = async (
   req: Request,
   res: Response,
   next: NextFunction
 ): Promise<void> => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 10;
+    const page = Number.parseInt(req.query.page as string) || 1;
+    const limit = Number.parseInt(req.query.limit as string) || 10;
     const skip = (page - 1) * limit;
 
-    const links = await Link.find({ createdBy: req.user?.userId })
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit);
+    const userId = req.user?.userId;
+    if (!userId) {
+      res.status(401).json({ success: false, message: 'Not authenticated' });
+      return;
+    }
 
-    const total = await Link.countDocuments({ createdBy: req.user?.userId });
+    const [links, total] = await Promise.all([
+      Link.find({ createdBy: userId }).sort({ createdAt: -1 }).skip(skip).limit(limit),
+      Link.countDocuments({ createdBy: userId }),
+    ]);
 
     res.json({
       success: true,
@@ -237,8 +233,8 @@ export const getUserLinks = async (
         page,
         limit,
         total,
-        pages: Math.ceil(total / limit)
-      }
+        pages: Math.ceil(total / limit),
+      },
     });
   } catch (error) {
     next(error);
