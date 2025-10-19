@@ -8,7 +8,7 @@ export interface ILinkDocument extends Document {
   customAlias?: string;
   clicks: number;
   createdAt: Date;
-  createdBy: mongoose.Types.ObjectId | string | null; // Allow string, ObjectId, or null
+  createdBy: mongoose.Types.ObjectId | string | null;
   expiresAt: Date;
   isActive: boolean;
   title?: string;
@@ -46,13 +46,13 @@ const linkSchema = new Schema<ILinkDocument>({
     default: Date.now
   },
    createdBy: {
-    type: Schema.Types.Mixed, // Change to Mixed to handle both ObjectId and string
+    type: Schema.Types.Mixed,
     ref: 'User',
     required: true
   }, 
   expiresAt: {
     type: Date,
-    default: () => new Date(Date.now() + 365 * 24 * 60 * 60 * 1000) // 1 year from now
+    default: () => new Date(Date.now() + 365 * 24 * 60 * 60 * 1000) 
   },
   isActive: {
     type: Boolean,
