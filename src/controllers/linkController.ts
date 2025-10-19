@@ -1,8 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
-import { Link } from '../models/Link';
-import { CreateLinkRequest, CreateLinkResponse, LinkAnalytics } from '../types/link';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
+import { Link } from '../models/Link';
+import { CreateLinkRequest, CreateLinkResponse, LinkAnalytics } from '../types/link';
 
 // Avoid undefined assignment with exactOptionalPropertyTypes
 interface PageMetadata {
@@ -98,7 +98,7 @@ export const createShortLink = async (
         originalUrl: existingLink.originalUrl,
         shortCode: existingLink.shortCode,
         clicks: existingLink.clicks,
-        message: 'Existing short link found for this URL'
+        message: 'Existing short link found for this URL',
       };
       res.status(200).json(response);
       return;
@@ -116,7 +116,7 @@ export const createShortLink = async (
       shortUrl: `${req.protocol}://${req.get('host')}/${link.shortCode}`,
       originalUrl: link.originalUrl,
       shortCode: link.shortCode,
-      clicks: link.clicks
+      clicks: link.clicks,
     };
 
     res.status(201).json(response);
@@ -176,7 +176,7 @@ export const getLinkAnalytics = async (
       shortCode: link.shortCode,
       clicks: link.clicks,
       createdAt: link.createdAt,
-      isActive: link.isActive
+      isActive: link.isActive,
     };
 
     res.json(analytics);
@@ -212,6 +212,10 @@ export const getLinkForDelay = async (
       isActive: link.isActive
     };
     if (Object.keys(metadata).length > 0) analytics.metadata = metadata;
+
+    if (Object.keys(md).length > 0) {
+      analytics.metadata = md;
+    }
 
     res.json(analytics);
     return;
@@ -265,8 +269,8 @@ export const getUserLinks = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const page = parseInt(req.query.page as string) || 1;
-    const limit = parseInt(req.query.limit as string) || 10;
+    const page = Number.parseInt(req.query.page as string) || 1;
+    const limit = Number.parseInt(req.query.limit as string) || 10;
     const skip = (page - 1) * limit;
 
     const createdBy = (req.user?.userId ?? req.user?._id) || null;
@@ -283,8 +287,8 @@ export const getUserLinks = async (
         page,
         limit,
         total,
-        pages: Math.ceil(total / limit)
-      }
+        pages: Math.ceil(total / limit),
+      },
     });
     return;
   } catch (error) {

@@ -20,11 +20,12 @@ const linkSchema = new Schema<ILinkDocument>({
     type: String,
     required: [true, 'Original URL is required'],
     validate: {
-      validator: (v: string) => validator.isURL(v, {
-        protocols: ['http','https'],
-        require_tld: true,
-        require_protocol: true,
-      }),
+      validator: (v: string) =>
+        validator.isURL(v, {
+          protocols: ['http', 'https'],
+          require_tld: true,
+          require_protocol: true
+        }),
       message: 'Invalid URL format. Must include http:// or https://'
     }
   },
@@ -73,4 +74,6 @@ linkSchema.index({ shortCode: 1 });
 linkSchema.index({ createdAt: -1 });
 linkSchema.index({ createdBy: 1, createdAt: -1 });
 
-export const Link = mongoose.model<ILinkDocument>('Link', linkSchema);
+// Export types inferred from the schema
+export type LinkDoc = mongoose.InferSchemaType<typeof linkSchema> & { _id: mongoose.Types.ObjectId };
+export const Link = mongoose.model<LinkDoc>('Link', linkSchema);
