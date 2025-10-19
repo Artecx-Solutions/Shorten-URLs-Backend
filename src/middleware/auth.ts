@@ -9,60 +9,24 @@ export interface AuthRequest extends Request {
 
 export const auth = async (req: AuthRequest, res: Response, next: NextFunction) => {
   try {
-    // Check multiple possible token locations
-    let token = req.header('Authorization')?.replace('Bearer ', '');
+    const token = req.header('Authorization')?.replace('Bearer ', '');
     
-    // If not in Authorization header, check cookies or query string
-    if (!token && req.cookies?.token) {
-      token = req.cookies.token;
-    }
-    
-    if (!token && req.query?.token) {
-      token = req.query.token as string;
-    }
-
     if (!token) {
-      return res.status(401).json({
-        success: false,
-        message: 'Access denied. No token provided.'
-      });
+      // If no token, continue as anonymous user
+      return next();
     }
 
-    // Verify token
     const decoded = jwt.verify(token, process.env.JWT_SECRET!) as any;
-    
-    // Find user and include password field if needed
     const user = await User.findById(decoded.userId || decoded.id);
     
-    if (!user) {
-      return res.status(401).json({
-        success: false,
-        message: 'Token is not valid - user not found'
-      });
+    if (user) {
+      req.user = user;
     }
-
-    req.user = user;
+    
     next();
   } catch (error) {
     console.error('Auth middleware error:', error);
-    
-    if (error instanceof jwt.JsonWebTokenError) {
-      return res.status(401).json({
-        success: false,
-        message: 'Token is not valid - invalid signature'
-      });
-    }
-    
-    if (error instanceof jwt.TokenExpiredError) {
-      return res.status(401).json({
-        success: false,
-        message: 'Token is not valid - expired'
-      });
-    }
-
-    res.status(401).json({
-      success: false,
-      message: 'Token is not valid'
-    });
+    // Continue as anonymous user on error
+    next();
   }
 };
