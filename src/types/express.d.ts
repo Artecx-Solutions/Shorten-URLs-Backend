@@ -1,11 +1,11 @@
-import { ILink } from './link';
+import 'express';
 
-declare global {
-  namespace Express {
-    interface Request {
-      link?: ILink;
-    }
+declare module 'express-serve-static-core' {
+  interface Request {
+    user?: {
+      _id: string;
+      userId?: string;
+      email: string;
+    };
   }
 }
-
-export {};

@@ -1,32 +1,34 @@
-// middleware/auth.ts
 import { Request, Response, NextFunction } from 'express';
-import jwt from 'jsonwebtoken';
-import { User, IUser } from '../models/User';
+import * as jwt from 'jsonwebtoken';
 
-export interface AuthRequest extends Request {
-  user?: IUser;
-}
+const JWT_SECRET = (process.env.JWT_SECRET || 'dev-secret') as jwt.Secret;
 
-export const auth = async (req: AuthRequest, res: Response, next: NextFunction) => {
+type TokenPayload = jwt.JwtPayload & { userId?: string; email?: string };
+
+export const auth = (req: Request, res: Response, next: NextFunction) => {
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : undefined;
+
+  if (!token) {
+    return res.status(401).json({ success: false, message: 'No token provided' });
+  }
+
   try {
-    const token = req.header('Authorization')?.replace('Bearer ', '');
-    
-    if (!token) {
-      // If no token, continue as anonymous user
-      return next();
+    const decoded = jwt.verify(token, JWT_SECRET) as TokenPayload;
+
+    if (!decoded || !decoded.email) {
+      return res.status(401).json({ success: false, message: 'Invalid token' });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET!) as any;
-    const user = await User.findById(decoded.userId || decoded.id);
-    
-    if (user) {
-      req.user = user;
-    }
-    
-    next();
-  } catch (error) {
-    console.error('Auth middleware error:', error);
-    // Continue as anonymous user on error
-    next();
+    const authUser: { _id: string; email: string; userId?: string } = {
+      _id: decoded.userId ?? '',
+      email: decoded.email,
+    };
+    if (decoded.userId) authUser.userId = decoded.userId; 
+
+    req.user = authUser;
+    return next();
+  } catch {
+    return res.status(401).json({ success: false, message: 'Invalid token' });
   }
 };

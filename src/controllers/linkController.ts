@@ -4,7 +4,7 @@ import { CreateLinkRequest, CreateLinkResponse, LinkAnalytics } from '../types/l
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 
-// Add this interface for metadata
+// Avoid undefined assignment with exactOptionalPropertyTypes
 interface PageMetadata {
   title?: string;
   description?: string;
@@ -12,41 +12,56 @@ interface PageMetadata {
   image?: string;
 }
 
+// Helper: build metadata only with defined values
+const putIf = <T extends object, K extends keyof T>(obj: T, key: K, val: T[K] | undefined) => {
+  if (val !== undefined && val !== null && String(val).trim() !== '') {
+    // @ts-expect-error safe dynamic assign
+    obj[key] = typeof val === 'string' ? (val as string).trim() : val;
+  }
+  return obj;
+};
+
 // Helper function to fetch page metadata
 const fetchPageMetadata = async (url: string): Promise<PageMetadata> => {
   try {
     const response = await axios.get(url, {
       timeout: 5000,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; LinkShortener/1.0)'
-      }
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; LinkShortener/1.0)' }
     });
-    
+
     const $ = cheerio.load(response.data);
-    
-    const metadata: PageMetadata = {
-      title: $('title').text() || $('meta[property="og:title"]').attr('content'),
-      description: $('meta[name="description"]').attr('content') || 
-                   $('meta[property="og:description"]').attr('content'),
-      keywords: $('meta[name="keywords"]').attr('content'),
-      image: $('meta[property="og:image"]').attr('content')
-    };
 
-    // Clean up the data
-    Object.keys(metadata).forEach(key => {
-      if (metadata[key as keyof PageMetadata]) {
-        metadata[key as keyof PageMetadata] = metadata[key as keyof PageMetadata]?.trim();
-      }
-    });
+    const title =
+      $('title').text() ||
+      $('meta[property="og:title"]').attr('content') ||
+      $('meta[name="twitter:title"]').attr('content');
 
-    return metadata;
+    const description =
+      $('meta[name="description"]').attr('content') ||
+      $('meta[property="og:description"]').attr('content') ||
+      $('meta[name="twitter:description"]').attr('content');
+
+    const keywords = $('meta[name="keywords"]').attr('content');
+
+    const image =
+      $('meta[property="og:image"]').attr('content') ||
+      $('meta[name="twitter:image"]').attr('content');
+
+    // Build object conditionally (prevents assigning undefined)
+    let meta: PageMetadata = {};
+    putIf(meta, 'title', title);
+    putIf(meta, 'description', description);
+    putIf(meta, 'keywords', keywords);
+    putIf(meta, 'image', image);
+
+    return meta;
   } catch (error) {
     console.error('Error fetching page metadata:', error);
     return {};
   }
 };
 
-// Update the createShortLink function to include user
+// Create short link
 export const createShortLink = async (
   req: Request<{}, {}, CreateLinkRequest>,
   res: Response<CreateLinkResponse | { error: string }>,
@@ -54,13 +69,8 @@ export const createShortLink = async (
 ): Promise<void> => {
   try {
     const { originalUrl, customAlias } = req.body;
-
-    console.log(req.body)
-
-    // Normalize URL for better duplicate detection
     const normalizedUrl = originalUrl.trim().toLowerCase();
 
-    // Check if custom alias exists (regardless of URL)
     if (customAlias) {
       const existingAlias = await Link.findOne({ shortCode: customAlias });
       if (existingAlias) {
@@ -69,24 +79,20 @@ export const createShortLink = async (
       }
     }
 
-    // Check for existing links with the same URL for this user
-    const existingLinksQuery: any = { 
+    const existingLinksQuery: any = {
       originalUrl: { $regex: new RegExp(`^${normalizedUrl}$`, 'i') }
     };
 
-    // If user is logged in, only check their links
-    if (req.user) {
-      existingLinksQuery.createdBy = req.user.userId;
+    if (req.user?.userId || req.user?._id) {
+      existingLinksQuery.createdBy = (req.user.userId ?? req.user._id);
     } else {
-      // For anonymous users, only check links without user
       existingLinksQuery.createdBy = null;
     }
 
     const existingLinks = await Link.find(existingLinksQuery);
 
     if (existingLinks.length > 0) {
-      // Return existing link
-      const existingLink = existingLinks[0];
+      const existingLink = existingLinks[0]!;
       const response: CreateLinkResponse = {
         shortUrl: `${req.protocol}://${req.get('host')}/${existingLink.shortCode}`,
         originalUrl: existingLink.originalUrl,
@@ -98,11 +104,10 @@ export const createShortLink = async (
       return;
     }
 
-    // Create new link
     const link = new Link({
       originalUrl: normalizedUrl,
       customAlias: customAlias || undefined,
-      createdBy: req.user?.userId || null
+      createdBy: (req.user?.userId ?? req.user?._id) || null
     });
 
     await link.save();
@@ -115,8 +120,10 @@ export const createShortLink = async (
     };
 
     res.status(201).json(response);
+    return;
   } catch (error) {
     next(error);
+    return;
   }
 };
 
@@ -128,23 +135,25 @@ export const redirectToOriginalUrl = async (
   try {
     const { shortCode } = req.params;
 
-    const link = await Link.findOne({ 
-      shortCode,
-      isActive: true 
-    });
-
+    const link = await Link.findOne({ shortCode, isActive: true });
     if (!link) {
       res.status(404).json({ error: 'Link not found' });
       return;
     }
 
-    // Update click count
+    if (link.expiresAt && new Date(link.expiresAt) < new Date()) {
+      res.status(410).json({ error: 'This short URL has expired' });
+      return;
+    }
+
     link.clicks += 1;
     await link.save();
 
     res.redirect(link.originalUrl);
+    return;
   } catch (error) {
     next(error);
+    return;
   }
 };
 
@@ -157,7 +166,6 @@ export const getLinkAnalytics = async (
     const { shortCode } = req.params;
 
     const link = await Link.findOne({ shortCode });
-    
     if (!link) {
       res.status(404).json({ error: 'Link not found' });
       return;
@@ -172,8 +180,10 @@ export const getLinkAnalytics = async (
     };
 
     res.json(analytics);
+    return;
   } catch (error) {
     next(error);
+    return;
   }
 };
 
@@ -185,34 +195,68 @@ export const getLinkForDelay = async (
   try {
     const { shortCode } = req.params;
 
-    const link = await Link.findOne({ 
-      shortCode,
-      isActive: true 
-    });
-
+    const link = await Link.findOne({ shortCode, isActive: true });
     if (!link) {
       res.status(404).json({ error: 'Link not found' });
       return;
     }
 
-    // Fetch metadata from the original URL
     const metadata = await fetchPageMetadata(link.originalUrl);
 
+    // Build result without assigning undefined directly
     const analytics: LinkAnalytics & { metadata?: PageMetadata } = {
       originalUrl: link.originalUrl,
       shortCode: link.shortCode,
       clicks: link.clicks,
       createdAt: link.createdAt,
-      isActive: link.isActive,
-      metadata: Object.keys(metadata).length > 0 ? metadata : undefined
+      isActive: link.isActive
     };
+    if (Object.keys(metadata).length > 0) analytics.metadata = metadata;
 
     res.json(analytics);
+    return;
   } catch (error) {
     next(error);
+    return;
   }
 };
 
+// NEW: plain info (no redirect) for a shortCode
+export const getLinkInfo = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { shortCode } = req.params;
+    const link = await Link.findOne({ shortCode, isActive: true });
+
+    if (!link) {
+      res.status(404).json({ success: false, message: 'Short URL not found' });
+      return;
+    }
+    if (link.expiresAt && new Date(link.expiresAt) < new Date()) {
+      res.status(410).json({ success: false, message: 'This short URL has expired' });
+      return;
+    }
+
+    res.json({
+      success: true,
+      data: {
+        originalUrl: link.originalUrl,
+        shortCode: link.shortCode,
+        clicks: link.clicks,
+        createdAt: link.createdAt,
+        expiresAt: link.expiresAt,
+        isActive: link.isActive
+      }
+    });
+    return;
+  } catch (error) {
+    next(error);
+    return;
+  }
+};
 
 // Add function to get user's links
 export const getUserLinks = async (
@@ -225,12 +269,12 @@ export const getUserLinks = async (
     const limit = parseInt(req.query.limit as string) || 10;
     const skip = (page - 1) * limit;
 
-    const links = await Link.find({ createdBy: req.user?.userId })
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit);
+    const createdBy = (req.user?.userId ?? req.user?._id) || null;
 
-    const total = await Link.countDocuments({ createdBy: req.user?.userId });
+    const [links, total] = await Promise.all([
+      Link.find({ createdBy }).sort({ createdAt: -1 }).skip(skip).limit(limit),
+      Link.countDocuments({ createdBy })
+    ]);
 
     res.json({
       success: true,
@@ -242,7 +286,33 @@ export const getUserLinks = async (
         pages: Math.ceil(total / limit)
       }
     });
+    return;
   } catch (error) {
     next(error);
+    return;
+  }
+};
+
+// NEW: delete link owned by current user
+export const deleteLink = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { shortCode } = req.params;
+    const createdBy = (req.user?.userId ?? req.user?._id) || null;
+
+    const link = await Link.findOneAndDelete({ shortCode, createdBy });
+    if (!link) {
+      res.status(404).json({ success: false, message: 'Link not found' });
+      return;
+    }
+
+    res.json({ success: true, message: 'Link deleted successfully' });
+    return;
+  } catch (error) {
+    next(error);
+    return;
   }
 };
