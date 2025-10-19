@@ -27,7 +27,7 @@ app.use('/redirect', redirectRoutes);
 app.get('/:shortCode', async (req, res): Promise<void> => {
   try {
     const { shortCode } = req.params;
-    const { Link } = await import('./models/Link');
+    const { Link } = await import('./models/Link'); // typed model
 
     const link = await Link.findOne({ shortCode, isActive: true });
     if (!link) {

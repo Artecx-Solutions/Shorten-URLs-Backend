@@ -1,8 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
-import { Link } from '../models/Link';
 import { CreateLinkRequest, CreateLinkResponse, LinkAnalytics } from '../types/link';
+import { Link, LinkDoc } from '@/models/Link';
 
 // Avoid undefined assignment with exactOptionalPropertyTypes
 interface PageMetadata {
@@ -47,7 +47,6 @@ const fetchPageMetadata = async (url: string): Promise<PageMetadata> => {
       $('meta[property="og:image"]').attr('content') ||
       $('meta[name="twitter:image"]').attr('content');
 
-    // Build object conditionally (prevents assigning undefined)
     let meta: PageMetadata = {};
     putIf(meta, 'title', title);
     putIf(meta, 'description', description);
@@ -60,6 +59,21 @@ const fetchPageMetadata = async (url: string): Promise<PageMetadata> => {
     return {};
   }
 };
+
+// -------------- Short code helpers --------------
+const randomCode = (len = 6) => Math.random().toString(36).slice(2, 2 + len);
+
+const generateUniqueShortCode = async (len = 6): Promise<string> => {
+  let code = randomCode(len);
+  // Ensure uniqueness
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const exists = await Link.exists({ shortCode: code });
+    if (!exists) return code;
+    code = randomCode(len);
+  }
+};
+// -----------------------------------------------
 
 // Create short link
 export const createShortLink = async (
@@ -84,12 +98,12 @@ export const createShortLink = async (
     };
 
     if (req.user?.userId || req.user?._id) {
-      existingLinksQuery.createdBy = (req.user.userId ?? req.user._id);
+      existingLinksQuery.createdBy = req.user.userId ?? req.user._id;
     } else {
       existingLinksQuery.createdBy = null;
     }
 
-    const existingLinks = await Link.find(existingLinksQuery);
+    const existingLinks: LinkDoc[] = await Link.find(existingLinksQuery);
 
     if (existingLinks.length > 0) {
       const existingLink = existingLinks[0]!;
@@ -98,25 +112,26 @@ export const createShortLink = async (
         originalUrl: existingLink.originalUrl,
         shortCode: existingLink.shortCode,
         clicks: existingLink.clicks,
-        message: 'Existing short link found for this URL',
+        message: 'Existing short link found for this URL'
       };
       res.status(200).json(response);
       return;
     }
 
-    const link = new Link({
+    const shortCode = customAlias ?? (await generateUniqueShortCode());
+
+    const link: LinkDoc = await Link.create({
       originalUrl: normalizedUrl,
+      shortCode,
       customAlias: customAlias || undefined,
       createdBy: (req.user?.userId ?? req.user?._id) || null
     });
-
-    await link.save();
 
     const response: CreateLinkResponse = {
       shortUrl: `${req.protocol}://${req.get('host')}/${link.shortCode}`,
       originalUrl: link.originalUrl,
       shortCode: link.shortCode,
-      clicks: link.clicks,
+      clicks: link.clicks
     };
 
     res.status(201).json(response);
@@ -135,7 +150,7 @@ export const redirectToOriginalUrl = async (
   try {
     const { shortCode } = req.params;
 
-    const link = await Link.findOne({ shortCode, isActive: true });
+    const link: LinkDoc | null = await Link.findOne({ shortCode, isActive: true });
     if (!link) {
       res.status(404).json({ error: 'Link not found' });
       return;
@@ -165,7 +180,7 @@ export const getLinkAnalytics = async (
   try {
     const { shortCode } = req.params;
 
-    const link = await Link.findOne({ shortCode });
+    const link: LinkDoc | null = await Link.findOne({ shortCode });
     if (!link) {
       res.status(404).json({ error: 'Link not found' });
       return;
@@ -176,7 +191,7 @@ export const getLinkAnalytics = async (
       shortCode: link.shortCode,
       clicks: link.clicks,
       createdAt: link.createdAt,
-      isActive: link.isActive,
+      isActive: link.isActive
     };
 
     res.json(analytics);
@@ -195,7 +210,7 @@ export const getLinkForDelay = async (
   try {
     const { shortCode } = req.params;
 
-    const link = await Link.findOne({ shortCode, isActive: true });
+    const link: LinkDoc | null = await Link.findOne({ shortCode, isActive: true });
     if (!link) {
       res.status(404).json({ error: 'Link not found' });
       return;
@@ -203,7 +218,6 @@ export const getLinkForDelay = async (
 
     const metadata = await fetchPageMetadata(link.originalUrl);
 
-    // Build result without assigning undefined directly
     const analytics: LinkAnalytics & { metadata?: PageMetadata } = {
       originalUrl: link.originalUrl,
       shortCode: link.shortCode,
@@ -213,9 +227,10 @@ export const getLinkForDelay = async (
     };
     if (Object.keys(metadata).length > 0) analytics.metadata = metadata;
 
-    if (Object.keys(md).length > 0) {
-      analytics.metadata = md;
-    }
+    // ❌ remove stray "md" block that caused TS2304
+    // if (Object.keys(md).length > 0) {
+    //   analytics.metadata = md;
+    // }
 
     res.json(analytics);
     return;
@@ -233,7 +248,7 @@ export const getLinkInfo = async (
 ): Promise<void> => {
   try {
     const { shortCode } = req.params;
-    const link = await Link.findOne({ shortCode, isActive: true });
+    const link: LinkDoc | null = await Link.findOne({ shortCode, isActive: true });
 
     if (!link) {
       res.status(404).json({ success: false, message: 'Short URL not found' });
@@ -262,7 +277,6 @@ export const getLinkInfo = async (
   }
 };
 
-// Add function to get user's links
 export const getUserLinks = async (
   req: Request,
   res: Response,
@@ -287,8 +301,8 @@ export const getUserLinks = async (
         page,
         limit,
         total,
-        pages: Math.ceil(total / limit),
-      },
+        pages: Math.ceil(total / limit)
+      }
     });
     return;
   } catch (error) {
@@ -297,7 +311,6 @@ export const getUserLinks = async (
   }
 };
 
-// NEW: delete link owned by current user
 export const deleteLink = async (
   req: Request,
   res: Response,
