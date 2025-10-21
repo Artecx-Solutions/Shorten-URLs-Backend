@@ -1,16 +1,15 @@
 import { Request, Response, NextFunction } from 'express';
-import * as jwt from 'jsonwebtoken';
+import { sign, type Secret, type SignOptions } from 'jsonwebtoken';
 import { User } from '../models/User';
 import { LoginRequest, SignupRequest, AuthResponse } from '../types/auth';
 
-const JWT_SECRET: jwt.Secret = (process.env.JWT_SECRET || 'your-secret-key') as jwt.Secret;
-// jsonwebtoken v9 types accept number or a specific string pattern for expiresIn
-const JWT_EXPIRES_IN: jwt.SignOptions['expiresIn'] =
-  (process.env.JWT_EXPIRES_IN as jwt.SignOptions['expiresIn']) ?? '7d';
+const JWT_SECRET: Secret = (process.env.JWT_SECRET || 'your-secret-key') as Secret;
+const JWT_EXPIRES_IN: SignOptions['expiresIn'] =
+  (process.env.JWT_EXPIRES_IN as SignOptions['expiresIn']) ?? '7d';
 
 // Generate JWT Token
 const generateToken = (userId: string, email: string): string => {
-  return jwt.sign({ userId, email }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+  return sign({ userId, email }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
 };
 
 // Signup Controller

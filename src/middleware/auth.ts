@@ -1,9 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
-import * as jwt from 'jsonwebtoken';
+import { verify, type JwtPayload, type Secret } from 'jsonwebtoken';
 
-const JWT_SECRET = (process.env.JWT_SECRET || 'dev-secret') as jwt.Secret;
-
-type TokenPayload = jwt.JwtPayload & { userId?: string; email?: string };
+const JWT_SECRET = (process.env.JWT_SECRET || 'dev-secret') as Secret;
+type TokenPayload = JwtPayload & { userId?: string; email?: string };
 
 export const auth = (req: Request, res: Response, next: NextFunction) => {
   const header = req.headers.authorization || '';
@@ -14,9 +13,8 @@ export const auth = (req: Request, res: Response, next: NextFunction) => {
   }
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as TokenPayload;
-
-    if (!decoded || !decoded.email) {
+    const decoded = verify(token, JWT_SECRET) as TokenPayload;
+    if (!decoded?.email) {
       return res.status(401).json({ success: false, message: 'Invalid token' });
     }
 
@@ -24,7 +22,7 @@ export const auth = (req: Request, res: Response, next: NextFunction) => {
       _id: decoded.userId ?? '',
       email: decoded.email,
     };
-    if (decoded.userId) authUser.userId = decoded.userId; 
+    if (decoded.userId) authUser.userId = decoded.userId;
 
     req.user = authUser;
     return next();
