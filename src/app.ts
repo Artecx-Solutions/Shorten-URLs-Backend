@@ -13,6 +13,12 @@ config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Ensure JWT_SECRET is set
+if (!process.env.JWT_SECRET) {
+  console.log('⚠️ JWT_SECRET not set, using default (NOT SECURE FOR PRODUCTION)');
+  process.env.JWT_SECRET = 'default-jwt-secret-change-in-production';
+}
+
 /**
  * CORS
  * - If CORS_ORIGINS is missing, we default to your SPA origin (Azure Static Web Apps).

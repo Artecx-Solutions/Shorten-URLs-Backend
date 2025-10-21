@@ -18,6 +18,12 @@ export const connectDB = async (): Promise<void> => {
       return;
     }
 
+    // Check if MONGODB_URI is provided
+    if (!MONGODB_URI || MONGODB_URI === 'mongodb://localhost:27017/link-shortener') {
+      console.log('⚠️ No MongoDB URI provided, running in LIMITED MODE');
+      return; // Don't exit, just skip database connection
+    }
+
     await mongoose.connect(MONGODB_URI, {
       // Add connection options for better error handling
       serverSelectionTimeoutMS: 10000, // Timeout after 10s
@@ -35,16 +41,7 @@ export const connectDB = async (): Promise<void> => {
     
   } catch (error) {
     console.error('❌ MongoDB connection failed:', error);
-    
-    // Provide helpful error message
-    console.log('\n💡 Troubleshooting tips:');
-    console.log('1. Make sure MongoDB is installed');
-    console.log('2. Start MongoDB service:');
-    console.log('   - Windows: net start MongoDB');
-    console.log('   - macOS: brew services start mongodb-community'); 
-    console.log('   - Linux: sudo systemctl start mongod');
-    console.log('3. Or download MongoDB from: https://www.mongodb.com/try/download/community');
-    
-    process.exit(1);
+    console.log('⚠️ Continuing without database connection...');
+    // Don't exit the process, let the app run in limited mode
   }
 };
