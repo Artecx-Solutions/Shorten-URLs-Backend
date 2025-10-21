@@ -6,8 +6,8 @@ import { config } from 'dotenv';
 import { connectDB } from './config/database';
 import linkRoutes from './routes/links';
 import authRoutes from './routes/auth';
-import { errorHandler, notFound } from './middleware/errorHandler';
 import metadataRoutes from './routes/metadata';
+import { errorHandler, notFound } from './middleware/errorHandler';
 
 config();
 
@@ -16,34 +16,45 @@ const PORT = process.env.PORT || 5000;
 
 /**
  * CORS
- * Set CORS_ORIGINS in env as a comma-separated list, e.g.:
- * CORS_ORIGINS=https://your-spa.azurestaticapps.net,http://localhost:5173
+ * - If CORS_ORIGINS is missing, we default to your SPA origin (Azure Static Web Apps).
+ * - To allow multiple origins, set CORS_ORIGINS to a comma-separated list.
+ * - For local dev, you can include http://localhost:5173 in CORS_ORIGINS.
  */
+const DEFAULT_SWA_ORIGIN = 'https://zealous-mushroom-0c6dc3200.3.azurestaticapps.net';
 const allowedOrigins =
-  (process.env.CORS_ORIGINS ?? '')
+  (process.env.CORS_ORIGINS ?? DEFAULT_SWA_ORIGIN)
     .split(',')
     .map(s => s.trim())
     .filter(Boolean);
 
 const corsOptions: cors.CorsOptions = {
   origin: (origin, cb) => {
-    if (!origin) return cb(null, true); // mobile apps / curl / same-origin
-    if (allowedOrigins.length === 0) return cb(null, true); // allow all (debug)
-    return allowedOrigins.includes(origin) ? cb(null, true) : cb(new Error('Not allowed by CORS'));
+    // Allow non-browser clients or same-origin requests (no Origin header)
+    if (!origin) return cb(null, true);
+
+    // Allow all if you explicitly set "*" in env (use carefully; not valid with credentials)
+    if (allowedOrigins.length === 1 && allowedOrigins[0] === '*') {
+      return cb(null, true);
+    }
+
+    // Otherwise only allow the configured list
+    return allowedOrigins.includes(origin)
+      ? cb(null, true)
+      : cb(new Error('Not allowed by CORS'));
   },
-  credentials: true,
+  credentials: true, // set true if you send cookies/Authorization from SPA
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
 };
 
-// 1) CORS first (so preflights get headers)
+// 1) CORS first (so preflight OPTIONS gets headers)
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 
 // 2) Security headers
 app.use(helmet());
 
-// 3) Body parser
+// 3) JSON body parsing
 app.use(express.json());
 
 // 4) API routes
@@ -51,7 +62,7 @@ app.use('/api/links', linkRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/metadata', metadataRoutes);
 
-// 5) Root-level redirect for short codes (e.g., /abc123)
+// 5) Root-level redirect for short codes (e.g., GET /abc123)
 app.get('/:shortCode', async (req: Request, res: Response): Promise<void> => {
   try {
     const { shortCode } = req.params;
@@ -72,7 +83,6 @@ app.get('/:shortCode', async (req: Request, res: Response): Promise<void> => {
     res.redirect(link.originalUrl);
     return;
   } catch (error) {
-    // Avoid swallowing errors silently
     // eslint-disable-next-line no-console
     console.error('❌ Root redirect error:', error);
     res.status(500).json({ success: false, message: 'Server error while redirecting' });
@@ -89,11 +99,12 @@ app.get('/health', async (_req: Request, res: Response): Promise<void> => {
     database: dbStatus,
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
+    allowedOrigins,
   });
   return;
 });
 
-// 7) Test route
+// 7) Test route (quick smoke test)
 app.get('/api/test', (_req: Request, res: Response): void => {
   res.json({
     message: 'Backend is working!',
@@ -148,6 +159,8 @@ const startServer = async (): Promise<void> => {
     app.listen(PORT, () => {
       // eslint-disable-next-line no-console
       console.log(`\n🎉 Link Shortener Backend Started on http://localhost:${PORT}`);
+      // eslint-disable-next-line no-console
+      console.log(`CORS allowing origins: ${allowedOrigins.join(', ') || '(all via reflect)'}`);
     });
   } catch (error) {
     // eslint-disable-next-line no-console
@@ -157,6 +170,8 @@ const startServer = async (): Promise<void> => {
     app.listen(PORT, () => {
       // eslint-disable-next-line no-console
       console.log(`\n⚠️ Server running in LIMITED MODE on http://localhost:${PORT}`);
+      // eslint-disable-next-line no-console
+      console.log(`CORS allowing origins: ${allowedOrigins.join(', ') || '(all via reflect)'}`);
     });
   }
 };
