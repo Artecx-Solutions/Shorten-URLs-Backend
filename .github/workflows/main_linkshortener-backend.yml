@@ -29,24 +29,11 @@ jobs:
           npm run build --if-present
           npm run test --if-present
 
-      - name: Prepare deployment folder
-        run: |
-          mkdir -p deploy
-          cp package.json package-lock.json deploy/
-          cp -r dist deploy/
-          ls -R deploy
-
-      - name: Zip artifact for deployment
-        run: |
-          cd deploy
-          zip -r ../release.zip .
-          ls -l ../release.zip
-
       - name: Upload artifact for deployment job
         uses: actions/upload-artifact@v4
         with:
           name: node-app
-          path: release.zip
+          path: .
 
   deploy:
     runs-on: ubuntu-latest
@@ -61,11 +48,6 @@ jobs:
         with:
           name: node-app
       
-      - name: Unzip artifact for deployment
-        run: |
-          unzip release.zip -d deploy
-          ls -R deploy
-
       - name: Login to Azure
         uses: azure/login@v2
         with:
@@ -79,5 +61,5 @@ jobs:
         with:
           app-name: 'linkShortener-backend'
           slot-name: 'Production'
-          package: ./deploy
-          startup-command: 'cd /home/site/wwwroot && npm ci && npm start'
+          package: .
+          
