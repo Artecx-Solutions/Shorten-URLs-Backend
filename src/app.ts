@@ -25,6 +25,8 @@ console.log('- NODE_ENV:', process.env.NODE_ENV || 'not set');
 console.log('- PORT:', process.env.PORT || 'not set');
 console.log('- MONGODB_URI:', process.env.MONGODB_URI ? 'set' : 'not set');
 console.log('- JWT_SECRET:', process.env.JWT_SECRET ? 'set' : 'not set');
+console.log('- Current working directory:', process.cwd());
+console.log('- Node version:', process.version);
 
 /**
  * CORS
@@ -163,31 +165,50 @@ app.use(errorHandler);
 // 10) Server bootstrap
 const startServer = async (): Promise<void> => {
   try {
+    console.log('🚀 Starting server...');
+    
     // eslint-disable-next-line no-console
     console.log('🔄 Attempting to connect to MongoDB...');
     await connectDB();
 
-    app.listen(PORT, () => {
+    const server = app.listen(PORT, () => {
       // eslint-disable-next-line no-console
       console.log(`\n🎉 Link Shortener Backend Started on port ${PORT}`);
       // eslint-disable-next-line no-console
       console.log(`CORS allowing origins: ${allowedOrigins.join(', ') || '(all via reflect)'}`);
       // eslint-disable-next-line no-console
       console.log(`Health check: http://localhost:${PORT}/health`);
+      console.log('✅ Server is ready to accept connections');
     });
+
+    server.on('error', (error) => {
+      console.error('❌ Server error:', error);
+    });
+
   } catch (error) {
     // eslint-disable-next-line no-console
-    console.error('\n❌ Failed to start server due to MongoDB connection issue');
+    console.error('\n❌ Failed to start server due to MongoDB connection issue:', error);
     // eslint-disable-next-line no-console
     console.log('\n🚀 Starting server in LIMITED MODE (No MongoDB)...');
-    app.listen(PORT, () => {
-      // eslint-disable-next-line no-console
-      console.log(`\n⚠️ Server running in LIMITED MODE on port ${PORT}`);
-      // eslint-disable-next-line no-console
-      console.log(`CORS allowing origins: ${allowedOrigins.join(', ') || '(all via reflect)'}`);
-      // eslint-disable-next-line no-console
-      console.log(`Health check: http://localhost:${PORT}/health`);
-    });
+    
+    try {
+      const server = app.listen(PORT, () => {
+        // eslint-disable-next-line no-console
+        console.log(`\n⚠️ Server running in LIMITED MODE on port ${PORT}`);
+        // eslint-disable-next-line no-console
+        console.log(`CORS allowing origins: ${allowedOrigins.join(', ') || '(all via reflect)'}`);
+        // eslint-disable-next-line no-console
+        console.log(`Health check: http://localhost:${PORT}/health`);
+        console.log('✅ Server is ready to accept connections (Limited Mode)');
+      });
+
+      server.on('error', (error) => {
+        console.error('❌ Server error in limited mode:', error);
+      });
+    } catch (startupError) {
+      console.error('💥 Critical startup error:', startupError);
+      process.exit(1);
+    }
   }
 };
 

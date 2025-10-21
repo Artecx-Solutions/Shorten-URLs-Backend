@@ -9,6 +9,7 @@
     "start": "node dist/app.js",
     "prestart": "npm run build",
     "postinstall": "npm run build",
+    "test-startup": "node test-startup.js",
     "type-check": "tsc --noEmit",
     "test": "node -e \"console.log('✅ No tests yet – skipping.');\""
   },
