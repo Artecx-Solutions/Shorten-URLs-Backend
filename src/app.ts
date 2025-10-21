@@ -26,26 +26,22 @@ const allowedOrigins =
     .map(s => s.trim())
     .filter(Boolean);
 
+const originMatchers = [
+  /^https:\/\/[a-z0-9-]+\.3\.azurestaticapps\.net$/,
+  /^http:\/\/localhost:\d+$/,
+];
+
 const corsOptions: cors.CorsOptions = {
   origin: (origin, cb) => {
-    if (!origin) return cb(null, true); // server-to-server or same-origin
-    if (allowedOrigins.length === 1 && allowedOrigins[0] === '*') {
-      return cb(null, true);
-    }
-    return allowedOrigins.includes(origin)
-      ? cb(null, true)
-      : cb(new Error('Not allowed by CORS'));
+    if (!origin) return cb(null, true);
+    if (allowedOrigins.includes(origin)) return cb(null, true);
+    if (originMatchers.some(rx => rx.test(origin))) return cb(null, true);
+    return cb(new Error('Not allowed by CORS'));
   },
-  credentials: true, // only if you actually send cookies/Authorization from SPA
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: [
-    'Content-Type',
-    'Authorization',
-    'X-Requested-With',
-    'Accept',
-    'Origin'
-  ],
-  optionsSuccessStatus: 204, // some browsers expect 204 for preflight
+  credentials: true,
+  methods: ['GET','POST','PUT','PATCH','DELETE','OPTIONS'],
+  allowedHeaders: ['Content-Type','Authorization','X-Requested-With','Accept','Origin'],
+  optionsSuccessStatus: 204,
 };
 
 // CORS should be the first middleware
