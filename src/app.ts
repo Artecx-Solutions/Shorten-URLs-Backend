@@ -1,4 +1,3 @@
-// src/app.ts
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -29,27 +28,30 @@ const allowedOrigins =
 
 const corsOptions: cors.CorsOptions = {
   origin: (origin, cb) => {
-    // Allow non-browser clients or same-origin requests (no Origin header)
-    if (!origin) return cb(null, true);
-
-    // Allow all if you explicitly set "*" in env (use carefully; not valid with credentials)
+    if (!origin) return cb(null, true); // server-to-server or same-origin
     if (allowedOrigins.length === 1 && allowedOrigins[0] === '*') {
       return cb(null, true);
     }
-
-    // Otherwise only allow the configured list
     return allowedOrigins.includes(origin)
       ? cb(null, true)
       : cb(new Error('Not allowed by CORS'));
   },
-  credentials: true, // set true if you send cookies/Authorization from SPA
+  credentials: true, // only if you actually send cookies/Authorization from SPA
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Requested-With',
+    'Accept',
+    'Origin'
+  ],
+  optionsSuccessStatus: 204, // some browsers expect 204 for preflight
 };
 
-// 1) CORS first (so preflight OPTIONS gets headers)
+// CORS should be the first middleware
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
+
 
 // 2) Security headers
 app.use(helmet());
