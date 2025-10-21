@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 import { CreateLinkRequest, CreateLinkResponse, LinkAnalytics } from '../types/link';
-import { Link, LinkDoc } from '@/models/Link';
+import { Link, LinkDoc } from '../models/Link';
 
 // Avoid undefined assignment with exactOptionalPropertyTypes
 interface PageMetadata {

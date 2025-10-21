@@ -1,4 +1,3 @@
-// src/models/Link.ts
 import mongoose, { Schema, HydratedDocument, Model } from 'mongoose';
 import validator from 'validator';
 
