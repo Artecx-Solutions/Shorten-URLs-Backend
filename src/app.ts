@@ -13,13 +13,13 @@ config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Ensure JWT_SECRET is set
+// Ensure JWT_SECRET is set (dev convenience)
 if (!process.env.JWT_SECRET) {
   console.log('⚠️ JWT_SECRET not set, using default (NOT SECURE FOR PRODUCTION)');
   process.env.JWT_SECRET = 'default-jwt-secret-change-in-production';
 }
 
-// Log environment status for debugging
+// Basic env diagnostics
 console.log('🔍 Environment Check:');
 console.log('- NODE_ENV:', process.env.NODE_ENV || 'not set');
 console.log('- PORT:', process.env.PORT || 'not set');
@@ -30,9 +30,6 @@ console.log('- Node version:', process.version);
 
 /**
  * CORS
- * - If CORS_ORIGINS is missing, we default to your SPA origin (Azure Static Web Apps).
- * - To allow multiple origins, set CORS_ORIGINS to a comma-separated list.
- * - For local dev, you can include http://localhost:5173 in CORS_ORIGINS.
  */
 const DEFAULT_SWA_ORIGIN = 'https://zealous-mushroom-0c6dc3200.3.azurestaticapps.net';
 const allowedOrigins =
@@ -59,10 +56,9 @@ const corsOptions: cors.CorsOptions = {
   optionsSuccessStatus: 204,
 };
 
-// CORS should be the first middleware
+// 1) CORS must be first
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
-
 
 // 2) Security headers
 app.use(helmet());
@@ -70,18 +66,62 @@ app.use(helmet());
 // 3) JSON body parsing
 app.use(express.json());
 
-// 4) API routes
+// 4) Health route (keep above catch-alls)
+app.get('/health', async (_req: Request, res: Response): Promise<void> => {
+  const mongoose = await import('mongoose');
+  const dbStatus = mongoose.default.connection.readyState === 1 ? 'Connected' : 'Disconnected';
+  res.json({
+    status: 'OK',
+    database: dbStatus,
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'development',
+    allowedOrigins,
+  });
+});
+
+// 5) Explicit favicon (prevents /:shortCode from grabbing it)
+app.get('/favicon.ico', (_req: Request, res: Response) => {
+  res.status(204).end();
+});
+
+// (Optional) robots.txt to reduce noise from crawlers
+app.get('/robots.txt', (_req: Request, res: Response) => {
+  res.type('text/plain').send('User-agent: *\nDisallow: /');
+});
+
+// 6) API routes
 app.use('/api/links', linkRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/metadata', metadataRoutes);
 
-// 5) Root-level redirect for short codes (e.g., GET /abc123)
-app.get('/:shortCode', async (req: Request, res: Response): Promise<void> => {
+// 7) Short-code redirect (regex avoids matching assets like .ico, .png, etc.)
+/**
+ * Valid short codes: 4–32 chars, letters, numbers, _ or -
+ * Example: /abc123, /X_y-9
+ */
+app.get('/:shortCode([A-Za-z0-9_-]{4,32})', async (
+  req: Request<{ shortCode: string }>,
+  res: Response
+): Promise<void> => {
   try {
     const { shortCode } = req.params;
-    const { Link } = await import('./models/Link'); // typed model
 
+    // Skip anything that looks like a file (defense-in-depth)
+    if (shortCode.includes('.')) {
+      res.status(404).json({ success: false, message: 'Not found' });
+      return;
+    }
+
+    // Only query if DB is connected; otherwise clean 503 instead of exploding
+    const mongoose = await import('mongoose');
+    if (mongoose.default.connection.readyState !== 1) {
+      res.status(503).json({ success: false, message: 'Database unavailable. Please try again shortly.' });
+      return;
+    }
+
+    const { Link } = await import('./models/Link');
     const link = await Link.findOne({ shortCode, isActive: true });
+
     if (!link) {
       res.status(404).json({ success: false, message: 'Short URL not found' });
       return;
@@ -93,31 +133,15 @@ app.get('/:shortCode', async (req: Request, res: Response): Promise<void> => {
 
     link.clicks += 1;
     await link.save();
+
     res.redirect(link.originalUrl);
-    return;
   } catch (error) {
-    // eslint-disable-next-line no-console
     console.error('❌ Root redirect error:', error);
     res.status(500).json({ success: false, message: 'Server error while redirecting' });
-    return;
   }
 });
 
-// 6) Health (DB status)
-app.get('/health', async (_req: Request, res: Response): Promise<void> => {
-  const mongoose = await import('mongoose');
-  const dbStatus = mongoose.default.connection.readyState === 1 ? 'Connected' : 'Disconnected';
-  res.json({
-    status: 'OK',
-    database: dbStatus,
-    timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'development',
-    allowedOrigins,
-  });
-  return;
-});
-
-// 7) Test route (quick smoke test)
+// 8) Test route (quick smoke test)
 app.get('/api/test', (_req: Request, res: Response): void => {
   res.json({
     message: 'Backend is working!',
@@ -135,7 +159,7 @@ app.get('/api/test', (_req: Request, res: Response): void => {
   });
 });
 
-// 8) Root info
+// 9) Root info
 app.get('/', (_req: Request, res: Response): void => {
   res.json({
     message: 'Link Shortener API is running!',
@@ -158,25 +182,20 @@ app.get('/', (_req: Request, res: Response): void => {
   });
 });
 
-// 9) 404 + error handler
+// 10) 404 + error handler
 app.use(notFound);
 app.use(errorHandler);
 
-// 10) Server bootstrap
+// 11) Server bootstrap
 const startServer = async (): Promise<void> => {
   try {
     console.log('🚀 Starting server...');
-    
-    // eslint-disable-next-line no-console
     console.log('🔄 Attempting to connect to MongoDB...');
     await connectDB();
 
     const server = app.listen(PORT, () => {
-      // eslint-disable-next-line no-console
       console.log(`\n🎉 Link Shortener Backend Started on port ${PORT}`);
-      // eslint-disable-next-line no-console
       console.log(`CORS allowing origins: ${allowedOrigins.join(', ') || '(all via reflect)'}`);
-      // eslint-disable-next-line no-console
       console.log(`Health check: http://localhost:${PORT}/health`);
       console.log('✅ Server is ready to accept connections');
     });
@@ -186,18 +205,13 @@ const startServer = async (): Promise<void> => {
     });
 
   } catch (error) {
-    // eslint-disable-next-line no-console
     console.error('\n❌ Failed to start server due to MongoDB connection issue:', error);
-    // eslint-disable-next-line no-console
     console.log('\n🚀 Starting server in LIMITED MODE (No MongoDB)...');
-    
+
     try {
       const server = app.listen(PORT, () => {
-        // eslint-disable-next-line no-console
         console.log(`\n⚠️ Server running in LIMITED MODE on port ${PORT}`);
-        // eslint-disable-next-line no-console
         console.log(`CORS allowing origins: ${allowedOrigins.join(', ') || '(all via reflect)'}`);
-        // eslint-disable-next-line no-console
         console.log(`Health check: http://localhost:${PORT}/health`);
         console.log('✅ Server is ready to accept connections (Limited Mode)');
       });
@@ -224,7 +238,6 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 
 process.on('SIGINT', async () => {
-  // eslint-disable-next-line no-console
   console.log('\n⚠️ Shutting down gracefully...');
   process.exit(0);
 });
