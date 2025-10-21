@@ -8,6 +8,7 @@
     "build": "tsc",
     "start": "node dist/app.js",
     "prestart": "npm run build",
+    "postinstall": "npm run build",
     "type-check": "tsc --noEmit",
     "test": "node -e \"console.log('✅ No tests yet – skipping.');\""
   },
@@ -37,9 +38,6 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/shortid": "^2.2.0",
     "@types/validator": "^13.15.3",
-    "nodemon": "^3.1.10",
-    "tsx": "^4.20.6",
-    "typescript": "^5.9.3",
-    "vite": "^7.1.11"
+    "typescript": "^5.9.3"
   }
 }
