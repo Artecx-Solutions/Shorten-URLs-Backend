@@ -1,47 +1,47 @@
 import mongoose from 'mongoose';
-import { config } from 'dotenv';
 
-config();
+const FALLBACK_URI =
+  'mongodb+srv://linkshortner:m1lk1$P01$0n@link-shortener.global.mongocluster.cosmos.azure.com/link-shortener?tls=true&authMechanism=SCRAM-SHA-256&retrywrites=false&maxIdleTimeMS=120000';
 
-// MongoDB URI configuration for different environments
-const MONGODB_URI = process.env.MONGODB_URI || 
-  (process.env.NODE_ENV === 'production' 
-    ? 'mongodb://localhost:27017/link-shortener' 
-    : 'mongodb://localhost:27017/link-shortener');
+const uri = process.env.MONGODB_URI || FALLBACK_URI;
 
-// Alternative: Use MongoDB Memory Server for development
-let isConnected = false;
-
-export const connectDB = async (): Promise<void> => {
-  try {
-    if (isConnected) {
-      return;
-    }
-
-    // Check if MONGODB_URI is provided
-    if (!MONGODB_URI || MONGODB_URI === 'mongodb://localhost:27017/link-shortener') {
-      console.log('⚠️ No MongoDB URI provided, running in LIMITED MODE');
-      return; // Don't exit, just skip database connection
-    }
-
-    await mongoose.connect(MONGODB_URI, {
-      // Add connection options for better error handling
-      serverSelectionTimeoutMS: 10000, // Timeout after 10s
-      socketTimeoutMS: 45000, // Close sockets after 45s of inactivity
-      maxPoolSize: 10, // Maintain up to 10 socket connections
-      serverApi: {
-        version: '1',
-        strict: false,
-        deprecationErrors: true,
-      }
-    });
-    
-    isConnected = true;
-    console.log('✅ MongoDB Connected Successfully');
-    
-  } catch (error) {
-    console.error('❌ MongoDB connection failed:', error);
-    console.log('⚠️ Continuing without database connection...');
-    // Don't exit the process, let the app run in limited mode
-  }
+/**
+ * Reasonable, Cosmos-friendly Mongoose options.
+ * - Short server selection/connect timeouts to avoid long hangs
+ * - IPv4 only (sometimes helps in restricted networks)
+ * - Small pool to start with
+ */
+const mongooseOptions: mongoose.ConnectOptions = {
+  serverSelectionTimeoutMS: 10000, // 10s to find a server
+  connectTimeoutMS: 10000,         // 10s TCP connect timeout
+  socketTimeoutMS: 45000,          // 45s idle socket timeout
+  heartbeatFrequencyMS: 10000,
+  maxPoolSize: 10,
+  minPoolSize: 0,
+  retryWrites: false as any,       // already disabled in URI, but keep explicit
+  family: 4,                       // prefer IPv4
 };
+
+/**
+ * Connect with a hard, overall timeout.
+ * If connection can't be established quickly, we reject so the app can decide to run in LIMITED MODE.
+ */
+export async function connectDBWithTimeout(overallMs = 12000): Promise<typeof mongoose> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), overallMs);
+
+  try {
+    // @ts-expect-error AbortSignal is not typed in older Mongoose versions; runtime works in Node 18/20+
+    const conn = await mongoose.connect(uri, { ...mongooseOptions, signal: controller.signal });
+    return conn;
+  } catch (err) {
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Optional: expose a quick status helper */
+export function dbStatus(): 'Connected' | 'Disconnected' {
+  return mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected';
+}

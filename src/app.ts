@@ -2,7 +2,7 @@ import express, { Request, Response } from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import { config } from 'dotenv';
-import { connectDB } from './config/database';
+import { connectDBWithTimeout, dbStatus } from './config/database';
 import linkRoutes from './routes/links';
 import authRoutes from './routes/auth';
 import metadataRoutes from './routes/metadata';
@@ -11,7 +11,7 @@ import { errorHandler, notFound } from './middleware/errorHandler';
 config();
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = Number(process.env.PORT) || 5000;
 
 // Ensure JWT_SECRET is set (dev convenience)
 if (!process.env.JWT_SECRET) {
@@ -23,7 +23,7 @@ if (!process.env.JWT_SECRET) {
 console.log('🔍 Environment Check:');
 console.log('- NODE_ENV:', process.env.NODE_ENV || 'not set');
 console.log('- PORT:', process.env.PORT || 'not set');
-console.log('- MONGODB_URI:', process.env.MONGODB_URI ? 'set' : 'not set');
+console.log('- MONGODB_URI:', process.env.MONGODB_URI ? 'set' : 'fallback in use');
 console.log('- JWT_SECRET:', process.env.JWT_SECRET ? 'set' : 'not set');
 console.log('- Current working directory:', process.cwd());
 console.log('- Node version:', process.version);
@@ -67,12 +67,10 @@ app.use(helmet());
 app.use(express.json());
 
 // 4) Health route (keep above catch-alls)
-app.get('/health', async (_req: Request, res: Response): Promise<void> => {
-  const mongoose = await import('mongoose');
-  const dbStatus = mongoose.default.connection.readyState === 1 ? 'Connected' : 'Disconnected';
+app.get('/health', (_req: Request, res: Response): void => {
   res.json({
     status: 'OK',
-    database: dbStatus,
+    database: dbStatus(),
     timestamp: new Date().toISOString(),
     environment: process.env.NODE_ENV || 'development',
     allowedOrigins,
@@ -113,8 +111,7 @@ app.get('/:shortCode([A-Za-z0-9_-]{4,32})', async (
     }
 
     // Only query if DB is connected; otherwise clean 503 instead of exploding
-    const mongoose = await import('mongoose');
-    if (mongoose.default.connection.readyState !== 1) {
+    if (dbStatus() !== 'Connected') {
       res.status(503).json({ success: false, message: 'Database unavailable. Please try again shortly.' });
       return;
     }
@@ -163,7 +160,7 @@ app.get('/api/test', (_req: Request, res: Response): void => {
 app.get('/', (_req: Request, res: Response): void => {
   res.json({
     message: 'Link Shortener API is running!',
-    database: 'Check /health for database status',
+    database: `Current: ${dbStatus()}`,
     endpoints: {
       auth: {
         login: 'POST /api/auth/login',
@@ -186,135 +183,39 @@ app.get('/', (_req: Request, res: Response): void => {
 app.use(notFound);
 app.use(errorHandler);
 
-// 11) Server bootstrap
-// const startServer = async (): Promise<void> => {
-//   try {
-//     console.log('🚀 Starting server...');
-//     console.log('🔄 Attempting to connect to MongoDB...');
-//     await connectDB();
+// --- Server bootstrap strategy ---
+//  - Start HTTP server immediately so Azure sees a live endpoint (prevents 504 on cold boot)
+//  - Attempt DB connection in the background with a hard timeout
+//  - Log mode (FULL vs LIMITED) and keep serving /health, /, and API that don't require DB
+const server = app.listen(PORT, () => {
+  console.log(`\n🚀 HTTP server listening on :${PORT}`);
+  console.log(`Health check: http://localhost:${PORT}/health`);
+});
 
-//     const server = app.listen(PORT, () => {
-//       console.log(`\n🎉 Link Shortener Backend Started on port ${PORT}`);
-//       console.log(`CORS allowing origins: ${allowedOrigins.join(', ') || '(all via reflect)'}`);
-//       console.log(`Health check: http://localhost:${PORT}/health`);
-//       console.log('✅ Server is ready to accept connections');
-//     });
+// Optional: tune keep-alives (helps behind Azure Front Door on long connections)
+server.keepAliveTimeout = 75_000;  // 75s
+server.headersTimeout   = 90_000;  // must be > keepAliveTimeout
 
-//     server.on('error', (error) => {
-//       console.error('❌ Server error:', error);
-//     });
-
-//   } catch (error) {
-//     console.error('\n❌ Failed to start server due to MongoDB connection issue:', error);
-//     console.log('\n🚀 Starting server in LIMITED MODE (No MongoDB)...');
-
-//     try {
-//       const server = app.listen(PORT, () => {
-//         console.log(`\n⚠️ Server running in LIMITED MODE on port ${PORT}`);
-//         console.log(`CORS allowing origins: ${allowedOrigins.join(', ') || '(all via reflect)'}`);
-//         console.log(`Health check: http://localhost:${PORT}/health`);
-//         console.log('✅ Server is ready to accept connections (Limited Mode)');
-//       });
-
-//       server.on('error', (error) => {
-//         console.error('❌ Server error in limited mode:', error);
-//       });
-//     } catch (startupError) {
-//       console.error('💥 Critical startup error:', startupError);
-//       process.exit(1);
-//     }
-//   }
-// };
-const startServer = async (): Promise<void> => {
-  const PORT_TO_USE = Number(PORT);
-
-  // small helper: promise timeout
-  const withTimeout = <T,>(p: Promise<T>, ms: number, label = 'timeout'): Promise<T> =>
-    new Promise<T>((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error(label)), ms);
-      p.then(v => { clearTimeout(t); resolve(v); })
-       .catch(e => { clearTimeout(t); reject(e); });
-    });
-
-  // background retry for DB connection (runs if first attempt failed/timed out)
-  const startDbRetryLoop = () => {
-    let attempt = 0;
-    const maxDelayMs = 60_000;
-
-    const tryOnce = async () => {
-      attempt += 1;
-      const backoff = Math.min(1000 * Math.pow(2, attempt), maxDelayMs);
-
-      try {
-        console.log(`🔁 [DB] Retry attempt ${attempt}...`);
-        await connectDB();
-        console.log('✅ [DB] Connected after retry');
-      } catch (err) {
-        console.error(`❌ [DB] Retry failed (attempt ${attempt}):`, (err as Error)?.message || err);
-        setTimeout(tryOnce, backoff);
-      }
-    };
-
-    // kick off
-    setTimeout(tryOnce, 3000);
-  };
-
+(async () => {
   try {
-    console.log('🚀 Starting server...');
-    console.log('🔄 Attempting initial MongoDB connection (with timeout)...');
-
-    // Attempt DB connect, but don't let it block startup forever
-    await withTimeout(connectDB(), 6000, 'DB connect timeout');
-
-    // If we got here, DB connected quickly — start normally
-    const server = app.listen(PORT_TO_USE, () => {
-      console.log(`\n🎉 Link Shortener Backend Started on port ${PORT_TO_USE} (DB: connected)`);
-      console.log(`CORS allowing origins: ${allowedOrigins.join(', ') || '(all via reflect)'}`);
-      console.log(`Health check: http://localhost:${PORT_TO_USE}/health`);
-      console.log('✅ Server is ready to accept connections');
-    });
-
-    server.on('error', (error) => {
-      console.error('❌ Server error:', error);
-    });
-
-  } catch (error) {
-    console.error('\n⚠️ Initial DB connect failed or timed out:', (error as Error)?.message || error);
-    console.log('🚦 Starting server in LIMITED MODE (DB not ready)...');
-
-    // Start server anyway so Azure doesn’t 504
-    const server = app.listen(PORT_TO_USE, () => {
-      console.log(`\n⚠️ Server running in LIMITED MODE on port ${PORT_TO_USE}`);
-      console.log(`CORS allowing origins: ${allowedOrigins.join(', ') || '(all via reflect)'}`);
-      console.log(`Health check: http://localhost:${PORT_TO_USE}/health`);
-      console.log('✅ Server is ready to accept connections (Limited Mode)');
-    });
-
-    server.on('error', (error) => {
-      console.error('❌ Server error in limited mode:', error);
-    });
-
-    // Keep trying to connect to DB in the background
-    startDbRetryLoop();
+    console.log('🔄 Connecting to MongoDB (with timeout)...');
+    await connectDBWithTimeout(12_000); // 12s hard cap
+    console.log('✅ MongoDB connected. Running in FULL MODE.');
+  } catch (err) {
+    console.error('⚠️ MongoDB connection failed or timed out. Running in LIMITED MODE.', err);
   }
-};
+})();
 
 // Global error handlers
 process.on('uncaughtException', (error) => {
   console.error('💥 Uncaught Exception:', error);
-  console.log('🔄 Continuing execution...');
 });
-
 process.on('unhandledRejection', (reason, promise) => {
   console.error('💥 Unhandled Rejection at:', promise, 'reason:', reason);
-  console.log('🔄 Continuing execution...');
 });
-
 process.on('SIGINT', async () => {
   console.log('\n⚠️ Shutting down gracefully...');
   process.exit(0);
 });
-
-startServer();
 
 export default app;
