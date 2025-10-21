@@ -187,16 +187,90 @@ app.use(notFound);
 app.use(errorHandler);
 
 // 11) Server bootstrap
+// const startServer = async (): Promise<void> => {
+//   try {
+//     console.log('🚀 Starting server...');
+//     console.log('🔄 Attempting to connect to MongoDB...');
+//     await connectDB();
+
+//     const server = app.listen(PORT, () => {
+//       console.log(`\n🎉 Link Shortener Backend Started on port ${PORT}`);
+//       console.log(`CORS allowing origins: ${allowedOrigins.join(', ') || '(all via reflect)'}`);
+//       console.log(`Health check: http://localhost:${PORT}/health`);
+//       console.log('✅ Server is ready to accept connections');
+//     });
+
+//     server.on('error', (error) => {
+//       console.error('❌ Server error:', error);
+//     });
+
+//   } catch (error) {
+//     console.error('\n❌ Failed to start server due to MongoDB connection issue:', error);
+//     console.log('\n🚀 Starting server in LIMITED MODE (No MongoDB)...');
+
+//     try {
+//       const server = app.listen(PORT, () => {
+//         console.log(`\n⚠️ Server running in LIMITED MODE on port ${PORT}`);
+//         console.log(`CORS allowing origins: ${allowedOrigins.join(', ') || '(all via reflect)'}`);
+//         console.log(`Health check: http://localhost:${PORT}/health`);
+//         console.log('✅ Server is ready to accept connections (Limited Mode)');
+//       });
+
+//       server.on('error', (error) => {
+//         console.error('❌ Server error in limited mode:', error);
+//       });
+//     } catch (startupError) {
+//       console.error('💥 Critical startup error:', startupError);
+//       process.exit(1);
+//     }
+//   }
+// };
 const startServer = async (): Promise<void> => {
+  const PORT_TO_USE = Number(PORT);
+
+  // small helper: promise timeout
+  const withTimeout = <T,>(p: Promise<T>, ms: number, label = 'timeout'): Promise<T> =>
+    new Promise<T>((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error(label)), ms);
+      p.then(v => { clearTimeout(t); resolve(v); })
+       .catch(e => { clearTimeout(t); reject(e); });
+    });
+
+  // background retry for DB connection (runs if first attempt failed/timed out)
+  const startDbRetryLoop = () => {
+    let attempt = 0;
+    const maxDelayMs = 60_000;
+
+    const tryOnce = async () => {
+      attempt += 1;
+      const backoff = Math.min(1000 * Math.pow(2, attempt), maxDelayMs);
+
+      try {
+        console.log(`🔁 [DB] Retry attempt ${attempt}...`);
+        await connectDB();
+        console.log('✅ [DB] Connected after retry');
+      } catch (err) {
+        console.error(`❌ [DB] Retry failed (attempt ${attempt}):`, (err as Error)?.message || err);
+        setTimeout(tryOnce, backoff);
+      }
+    };
+
+    // kick off
+    setTimeout(tryOnce, 3000);
+  };
+
   try {
     console.log('🚀 Starting server...');
-    console.log('🔄 Attempting to connect to MongoDB...');
-    await connectDB();
+    console.log('🔄 Attempting initial MongoDB connection (with timeout)...');
 
-    const server = app.listen(PORT, () => {
-      console.log(`\n🎉 Link Shortener Backend Started on port ${PORT}`);
+    // Attempt DB connect, but don't let it block startup forever
+    await withTimeout(connectDB(), 6000, 'DB connect timeout');
+
+    // If we got here, DB connected quickly — start normally
+    const server = app.listen(PORT_TO_USE, () => {
+      console.log(`\n🎉 Link Shortener Backend Started on port ${PORT_TO_USE} (DB: connected)`);
       console.log(`CORS allowing origins: ${allowedOrigins.join(', ') || '(all via reflect)'}`);
-      console.log(`Health check: http://localhost:${PORT}/health`);
+      console.log(`Health check: http://localhost:${PORT_TO_USE}/health`);
       console.log('✅ Server is ready to accept connections');
     });
 
@@ -205,24 +279,23 @@ const startServer = async (): Promise<void> => {
     });
 
   } catch (error) {
-    console.error('\n❌ Failed to start server due to MongoDB connection issue:', error);
-    console.log('\n🚀 Starting server in LIMITED MODE (No MongoDB)...');
+    console.error('\n⚠️ Initial DB connect failed or timed out:', (error as Error)?.message || error);
+    console.log('🚦 Starting server in LIMITED MODE (DB not ready)...');
 
-    try {
-      const server = app.listen(PORT, () => {
-        console.log(`\n⚠️ Server running in LIMITED MODE on port ${PORT}`);
-        console.log(`CORS allowing origins: ${allowedOrigins.join(', ') || '(all via reflect)'}`);
-        console.log(`Health check: http://localhost:${PORT}/health`);
-        console.log('✅ Server is ready to accept connections (Limited Mode)');
-      });
+    // Start server anyway so Azure doesn’t 504
+    const server = app.listen(PORT_TO_USE, () => {
+      console.log(`\n⚠️ Server running in LIMITED MODE on port ${PORT_TO_USE}`);
+      console.log(`CORS allowing origins: ${allowedOrigins.join(', ') || '(all via reflect)'}`);
+      console.log(`Health check: http://localhost:${PORT_TO_USE}/health`);
+      console.log('✅ Server is ready to accept connections (Limited Mode)');
+    });
 
-      server.on('error', (error) => {
-        console.error('❌ Server error in limited mode:', error);
-      });
-    } catch (startupError) {
-      console.error('💥 Critical startup error:', startupError);
-      process.exit(1);
-    }
+    server.on('error', (error) => {
+      console.error('❌ Server error in limited mode:', error);
+    });
+
+    // Keep trying to connect to DB in the background
+    startDbRetryLoop();
   }
 };
 
