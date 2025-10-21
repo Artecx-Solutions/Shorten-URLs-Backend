@@ -3,8 +3,11 @@ import { config } from 'dotenv';
 
 config();
 
-// For development without MongoDB installation
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/link-shortener';
+// MongoDB URI configuration for different environments
+const MONGODB_URI = process.env.MONGODB_URI || 
+  (process.env.NODE_ENV === 'production' 
+    ? 'mongodb://localhost:27017/link-shortener' 
+    : 'mongodb://localhost:27017/link-shortener');
 
 // Alternative: Use MongoDB Memory Server for development
 let isConnected = false;
@@ -17,8 +20,14 @@ export const connectDB = async (): Promise<void> => {
 
     await mongoose.connect(MONGODB_URI, {
       // Add connection options for better error handling
-      serverSelectionTimeoutMS: 5000, // Timeout after 5s instead of 30s
+      serverSelectionTimeoutMS: 10000, // Timeout after 10s
       socketTimeoutMS: 45000, // Close sockets after 45s of inactivity
+      maxPoolSize: 10, // Maintain up to 10 socket connections
+      serverApi: {
+        version: '1',
+        strict: false,
+        deprecationErrors: true,
+      }
     });
     
     isConnected = true;
