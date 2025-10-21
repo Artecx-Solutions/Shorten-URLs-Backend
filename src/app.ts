@@ -19,6 +19,13 @@ if (!process.env.JWT_SECRET) {
   process.env.JWT_SECRET = 'default-jwt-secret-change-in-production';
 }
 
+// Log environment status for debugging
+console.log('🔍 Environment Check:');
+console.log('- NODE_ENV:', process.env.NODE_ENV || 'not set');
+console.log('- PORT:', process.env.PORT || 'not set');
+console.log('- MONGODB_URI:', process.env.MONGODB_URI ? 'set' : 'not set');
+console.log('- JWT_SECRET:', process.env.JWT_SECRET ? 'set' : 'not set');
+
 /**
  * CORS
  * - If CORS_ORIGINS is missing, we default to your SPA origin (Azure Static Web Apps).
@@ -162,9 +169,11 @@ const startServer = async (): Promise<void> => {
 
     app.listen(PORT, () => {
       // eslint-disable-next-line no-console
-      console.log(`\n🎉 Link Shortener Backend Started on http://localhost:${PORT}`);
+      console.log(`\n🎉 Link Shortener Backend Started on port ${PORT}`);
       // eslint-disable-next-line no-console
       console.log(`CORS allowing origins: ${allowedOrigins.join(', ') || '(all via reflect)'}`);
+      // eslint-disable-next-line no-console
+      console.log(`Health check: http://localhost:${PORT}/health`);
     });
   } catch (error) {
     // eslint-disable-next-line no-console
@@ -173,12 +182,25 @@ const startServer = async (): Promise<void> => {
     console.log('\n🚀 Starting server in LIMITED MODE (No MongoDB)...');
     app.listen(PORT, () => {
       // eslint-disable-next-line no-console
-      console.log(`\n⚠️ Server running in LIMITED MODE on http://localhost:${PORT}`);
+      console.log(`\n⚠️ Server running in LIMITED MODE on port ${PORT}`);
       // eslint-disable-next-line no-console
       console.log(`CORS allowing origins: ${allowedOrigins.join(', ') || '(all via reflect)'}`);
+      // eslint-disable-next-line no-console
+      console.log(`Health check: http://localhost:${PORT}/health`);
     });
   }
 };
+
+// Global error handlers
+process.on('uncaughtException', (error) => {
+  console.error('💥 Uncaught Exception:', error);
+  console.log('🔄 Continuing execution...');
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('💥 Unhandled Rejection at:', promise, 'reason:', reason);
+  console.log('🔄 Continuing execution...');
+});
 
 process.on('SIGINT', async () => {
   // eslint-disable-next-line no-console
