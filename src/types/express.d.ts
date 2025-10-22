@@ -2,10 +2,6 @@ import 'express';
 
 declare module 'express-serve-static-core' {
   interface Request {
-    user?: {
-      _id: string;
-      userId?: string;
-      email: string;
-    };
+    user?: { sub: string; role: 'admin'|'manager'|'user'; tv: number };
   }
 }

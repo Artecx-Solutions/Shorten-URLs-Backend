@@ -1,58 +1,32 @@
-import mongoose, { Schema, HydratedDocument, Model } from 'mongoose';
-import validator from 'validator';
+import { Schema, model, Types } from 'mongoose';
 
-export interface ILink {
+export interface LinkDoc {
+  _id: Types.ObjectId;
   originalUrl: string;
   shortCode: string;
   customAlias?: string;
   clicks: number;
   createdAt: Date;
-  createdBy: mongoose.Types.ObjectId | string | null;
+  createdBy: Types.ObjectId | null;
   expiresAt: Date;
   isActive: boolean;
   title?: string;
   description?: string;
 }
 
-const linkSchema = new Schema<ILink>(
+const LinkSchema = new Schema<LinkDoc>(
   {
-    originalUrl: {
-      type: String,
-      required: [true, 'Original URL is required'],
-      validate: {
-        validator: (v: string) =>
-          validator.isURL(v, {
-            protocols: ['http', 'https'],
-            require_tld: true,
-            require_protocol: true
-          }),
-        message: 'Invalid URL format. Must include http:// or https://'
-      }
-    },
-    shortCode: { type: String, required: true, unique: true },
-    customAlias: { type: String, sparse: true },
+    originalUrl: { type: String, required: true, trim: true },
+    shortCode: { type: String, required: true, unique: true, index: true },
+    customAlias: { type: String, trim: true },
     clicks: { type: Number, default: 0 },
-    createdAt: { type: Date, default: Date.now },
-    // allow anonymous links (null) -> do NOT mark required
-    createdBy: { type: Schema.Types.Mixed, ref: 'User', default: null },
-    expiresAt: {
-      type: Date,
-      default: () => new Date(Date.now() + 365 * 24 * 60 * 60 * 1000)
-    },
-    isActive: { type: Boolean, default: true },
-    title: { type: String, maxlength: [100, 'Title cannot be more than 100 characters'] },
-    description: { type: String, maxlength: [500, 'Description cannot be more than 500 characters'] }
+    createdBy: { type: Schema.Types.ObjectId, ref: 'User', default: null, index: true },
+    expiresAt: { type: Date, required: true, index: true },
+    isActive: { type: Boolean, default: true, index: true },
+    title: { type: String, trim: true },
+    description: { type: String, trim: true }
   },
-  { versionKey: false }
+  { timestamps: true }
 );
 
-// Helpful indexes
-linkSchema.index({ shortCode: 1 });
-linkSchema.index({ createdAt: -1 });
-linkSchema.index({ createdBy: 1, createdAt: -1 });
-
-export type LinkDoc = HydratedDocument<ILink>;
-export type LinkModel = Model<ILink>;
-
-// Strongly-typed model
-export const Link: LinkModel = mongoose.model<ILink>('Link', linkSchema);
+export const Link = model<LinkDoc>('Link', LinkSchema);
