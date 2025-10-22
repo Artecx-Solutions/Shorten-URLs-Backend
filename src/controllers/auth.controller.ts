@@ -6,7 +6,7 @@ import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../utils/
 import { env } from '../config/env';
 
 const signupSchema = z.object({
-  fullName: z.string().min(2),
+  name: z.string().min(2),
   email: z.string().email(),
   password: z.string().min(6)
 });
@@ -30,13 +30,13 @@ export async function signup(req: Request, res: Response) {
   const parsed = signupSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
 
-  const { fullName, email, password } = parsed.data;
+  const { name, email, password } = parsed.data;
 
   const existing = await User.findOne({ email });
   if (existing) return res.status(409).json({ error: 'Email already in use' });
 
   const user = await User.create({
-    fullName,
+    name,
     email,
     passwordHash: await hashPassword(password),
     role: 'user'
@@ -49,7 +49,7 @@ export async function signup(req: Request, res: Response) {
   res
     .cookie('refreshToken', refreshToken, refreshCookieOptions())
     .status(201)
-    .json({ accessToken, user: { id: user._id, fullName: user.fullName, email: user.email, role: user.role } });
+    .json({ accessToken, user: { id: user._id, name: user.name, email: user.email, role: user.role } });
 }
 
 export async function login(req: Request, res: Response) {
@@ -69,7 +69,7 @@ export async function login(req: Request, res: Response) {
 
   res
     .cookie('refreshToken', refreshToken, refreshCookieOptions())
-    .json({ accessToken, user: { id: user._id, fullName: user.fullName, email: user.email, role: user.role } });
+    .json({ accessToken, user: { id: user._id, name: user.name, email: user.email, role: user.role } });
 }
 
 export async function refresh(req: Request, res: Response) {
