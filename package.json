@@ -12,7 +12,7 @@
     "test": "node -e \"console.log('✅ No tests yet – skipping.');\""
   },
   "engines": {
-    "node": ">=20 <21"
+    "node": ">=20 <22"
   },
   "dependencies": {
     "axios": "^1.12.2",
