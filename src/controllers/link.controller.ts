@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { Link } from '../models/Link';
 import type { LinkDoc } from '../models/Link';
 import { CreateLinkRequest, CreateLinkResponse, LinkAnalytics } from '../types/link';
+import { hashPassword, verifyPassword } from '../utils/password';
 
 const FIVE_DAYS_MS = 5 * 24 * 60 * 60 * 1000;
 
@@ -30,6 +31,7 @@ const normalizeUrl = (raw: string) => {
 };
 
 const randomCode = (len = 6) => Math.random().toString(36).slice(2, 2 + len);
+
 const generateUniqueShortCode = async (len = 6): Promise<string> => {
   let code = randomCode(len);
   // eslint-disable-next-line no-constant-condition
@@ -46,11 +48,19 @@ const isReserved = (alias: string) => {
 };
 
 // ---------- zod ----------
+// const createLinkSchema = z.object({
+//   originalUrl: z.string().url().or(z.string().min(4)), // we'll normalize if missing protocol
+//   customAlias: z.string().regex(/^[a-zA-Z0-9-_]{3,30}$/).optional(),
+//   title: z.string().max(200).optional(),
+//   description: z.string().max(500).optional()
+// });
 const createLinkSchema = z.object({
-  originalUrl: z.string().url().or(z.string().min(4)), // we'll normalize if missing protocol
+  originalUrl: z.string().url().or(z.string().min(4)),
   customAlias: z.string().regex(/^[a-zA-Z0-9-_]{3,30}$/).optional(),
   title: z.string().max(200).optional(),
-  description: z.string().max(500).optional()
+  description: z.string().max(500).optional(),
+  password: z.string().min(4).max(128).optional(),           // <-- NEW
+  expiryDate: z.string().datetime().optional()               // <-- NEW (ISO)
 });
 
 // ---------- page metadata ----------
@@ -61,6 +71,7 @@ interface PageMetadata {
   image?: string;
   siteName?: string;
 }
+
 const fetchPageMetadata = async (url: string): Promise<PageMetadata> => {
   try {
     const response = await axios.get(url, {
@@ -117,7 +128,100 @@ async function enforceCreateQuota(userId: string) {
   }
 }
 
+async function ensureLinkPasswordOk(req: Request, link: LinkDoc & { passwordHash?: string }) {
+  if (!link.passwordHash) return true;
+  const supplied =
+    (req.headers['x-link-password'] as string | undefined) ||
+    (typeof req.query.p === 'string' ? (req.query.p as string) : undefined);
+  if (!supplied) return false;
+  return verifyPassword(supplied, link.passwordHash);
+}
+
+function resolveExpiryDate(expiryDate?: string): Date {
+  const max = new Date(Date.now() + FIVE_DAYS_MS);
+  if (!expiryDate) return max;            // default = 5 days from now
+  const d = new Date(expiryDate);
+  if (Number.isNaN(+d)) return max;       // fallback to default if bad date
+  if (d < new Date()) return max;         // not in the past
+  return d <= max ? d : max;              // cap at +5 days
+}
+
 // Create short link (AUTH REQUIRED)
+// export const createShortLink = async (
+//   req: Request<{}, {}, CreateLinkRequest>,
+//   res: Response<CreateLinkResponse | { error: string }>,
+//   next: NextFunction
+// ): Promise<void> => {
+//   try {
+//     const parsed = createLinkSchema.safeParse(req.body);
+//     if (!parsed.success) {
+//       res.status(400).json({ error: parsed.error.flatten() as unknown as string });
+//       return;
+//     }
+
+//     const userId = (req as any).user?.sub as string | undefined;
+//     if (!userId) {
+//       res.status(401).json({ error: 'Unauthorized' });
+//       return;
+//     }
+
+//     await enforceCreateQuota(userId);
+
+//     const { originalUrl, customAlias, title, description } = parsed.data;
+//     const normalizedUrl = normalizeUrl(originalUrl);
+
+//     if (customAlias) {
+//       if (isReserved(customAlias)) {
+//         res.status(400).json({ error: 'Custom alias is reserved' });
+//         return;
+//       }
+//       const existingAlias = await Link.findOne({ shortCode: customAlias });
+//       if (existingAlias) {
+//         res.status(400).json({ error: 'Custom alias already exists' });
+//         return;
+//       }
+//     }
+
+//     // If user already created a short link for same URL, return it
+//     const existing = await Link.findOne({
+//       originalUrl: new RegExp(`^${normalizedUrl}$`, 'i'),
+//       createdBy: userId
+//     });
+//     if (existing) {
+//       res.status(200).json({
+//         shortUrl: `${req.protocol}://${req.get('host')}/r/${existing.shortCode}`,
+//         originalUrl: existing.originalUrl,
+//         shortCode: existing.shortCode,
+//         clicks: existing.clicks,
+//         message: 'Existing short link found for this URL'
+//       });
+//       return;
+//     }
+
+//     const shortCode = customAlias ?? (await generateUniqueShortCode());
+//     const expiresAt = new Date(Date.now() + FIVE_DAYS_MS);
+
+//     const link = await Link.create({
+//       originalUrl: normalizedUrl,
+//       shortCode,
+//       customAlias: customAlias || undefined,
+//       createdBy: userId,
+//       expiresAt,
+//       isActive: true,
+//       title,
+//       description
+//     });
+
+//     res.status(201).json({
+//       shortUrl: `${req.protocol}://${req.get('host')}/r/${link.shortCode}`,
+//       originalUrl: link.originalUrl,
+//       shortCode: link.shortCode,
+//       clicks: link.clicks
+//     });
+//   } catch (err) {
+//     next(err);
+//   }
+// };
 export const createShortLink = async (
   req: Request<{}, {}, CreateLinkRequest>,
   res: Response<CreateLinkResponse | { error: string }>,
@@ -138,7 +242,7 @@ export const createShortLink = async (
 
     await enforceCreateQuota(userId);
 
-    const { originalUrl, customAlias, title, description } = parsed.data;
+    const { originalUrl, customAlias, title, description, password, expiryDate } = parsed.data;
     const normalizedUrl = normalizeUrl(originalUrl);
 
     if (customAlias) {
@@ -153,7 +257,7 @@ export const createShortLink = async (
       }
     }
 
-    // If user already created a short link for same URL, return it
+    // Return existing (same user + same normalized URL)
     const existing = await Link.findOne({
       originalUrl: new RegExp(`^${normalizedUrl}$`, 'i'),
       createdBy: userId
@@ -170,7 +274,9 @@ export const createShortLink = async (
     }
 
     const shortCode = customAlias ?? (await generateUniqueShortCode());
-    const expiresAt = new Date(Date.now() + FIVE_DAYS_MS);
+    const expiresAt = resolveExpiryDate(expiryDate);
+
+    const passwordHash = password ? await hashPassword(password) : undefined;
 
     const link = await Link.create({
       originalUrl: normalizedUrl,
@@ -180,7 +286,8 @@ export const createShortLink = async (
       expiresAt,
       isActive: true,
       title,
-      description
+      description,
+      passwordHash // <-- NEW
     });
 
     res.status(201).json({
@@ -194,15 +301,37 @@ export const createShortLink = async (
   }
 };
 
+// export const redirectToOriginalUrl = async (req: Request, res: Response, next: NextFunction) => {
+//   try {
+//     const { shortCode } = req.params;
+//     const link = await Link.findOne({ shortCode, isActive: true });
+//     if (!link) return res.status(404).json({ error: 'Link not found' });
+
+//     if (link.expiresAt && link.expiresAt < new Date()) {
+//       return res.status(410).json({ error: 'This short URL has expired' });
+//     }
+
+//     link.clicks += 1;
+//     await link.save();
+
+//     res.redirect(link.originalUrl);
+//   } catch (e) {
+//     next(e);
+//   }
+// };
 export const redirectToOriginalUrl = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { shortCode } = req.params;
-    const link = await Link.findOne({ shortCode, isActive: true });
+    const link = await Link.findOne({ shortCode, isActive: true }).select('+passwordHash'); // need hash
     if (!link) return res.status(404).json({ error: 'Link not found' });
 
     if (link.expiresAt && link.expiresAt < new Date()) {
       return res.status(410).json({ error: 'This short URL has expired' });
     }
+
+    // password-protected?
+    const ok = await ensureLinkPasswordOk(req, link);
+    if (!ok) return res.status(401).json({ error: 'Password required or invalid' });
 
     link.clicks += 1;
     await link.save();
@@ -213,11 +342,39 @@ export const redirectToOriginalUrl = async (req: Request, res: Response, next: N
   }
 };
 
+// export const getLinkInfo = async (req: Request, res: Response, next: NextFunction) => {
+//   try {
+//     const { shortCode } = req.params;
+//     const link = await Link.findOne({ shortCode });
+//     if (!link) return res.status(404).json({ error: 'Short URL not found' });
+
+//     res.json({
+//       success: true,
+//       data: {
+//         originalUrl: link.originalUrl,
+//         shortCode: link.shortCode,
+//         clicks: link.clicks,
+//         createdAt: link.createdAt,
+//         expiresAt: link.expiresAt,
+//         isActive: link.isActive,
+//         title: link.title,
+//         description: link.description
+//       }
+//     });
+//   } catch (e) {
+//     next(e);
+//   }
+// };
 export const getLinkInfo = async (req: Request, res: Response, next: NextFunction) => {
   try {
     const { shortCode } = req.params;
-    const link = await Link.findOne({ shortCode });
+    const link = await Link.findOne({ shortCode }).select('+passwordHash');
     if (!link) return res.status(404).json({ error: 'Short URL not found' });
+
+    if (link.passwordHash) {
+      const ok = await ensureLinkPasswordOk(req, link);
+      if (!ok) return res.status(401).json({ error: 'Password required or invalid' });
+    }
 
     res.json({
       success: true,
@@ -299,6 +456,31 @@ export const deleteLink = async (req: Request, res: Response, next: NextFunction
 };
 
 // Extra: Details plus metadata (delayed page)
+// export const getLinkForDelay = async (
+//   req: Request,
+//   res: Response<LinkAnalytics & { metadata?: PageMetadata } | { error: string }>,
+//   next: NextFunction
+// ) => {
+//   try {
+//     const { shortCode } = req.params;
+//     const link = await Link.findOne({ shortCode, isActive: true });
+//     if (!link) return res.status(404).json({ error: 'Link not found' });
+
+//     const metadata = await fetchPageMetadata(link.originalUrl);
+//     const result: LinkAnalytics & { metadata?: PageMetadata } = {
+//       originalUrl: link.originalUrl,
+//       shortCode: link.shortCode,
+//       clicks: link.clicks,
+//       createdAt: link.createdAt,
+//       isActive: link.isActive
+//     };
+//     if (Object.keys(metadata).length > 0) result.metadata = metadata;
+
+//     res.json(result);
+//   } catch (e) {
+//     next(e);
+//   }
+// };
 export const getLinkForDelay = async (
   req: Request,
   res: Response<LinkAnalytics & { metadata?: PageMetadata } | { error: string }>,
@@ -306,8 +488,13 @@ export const getLinkForDelay = async (
 ) => {
   try {
     const { shortCode } = req.params;
-    const link = await Link.findOne({ shortCode, isActive: true });
+    const link = await Link.findOne({ shortCode, isActive: true }).select('+passwordHash');
     if (!link) return res.status(404).json({ error: 'Link not found' });
+
+    if (link.passwordHash) {
+      const ok = await ensureLinkPasswordOk(req, link);
+      if (!ok) return res.status(401).json({ error: 'Password required or invalid' });
+    }
 
     const metadata = await fetchPageMetadata(link.originalUrl);
     const result: LinkAnalytics & { metadata?: PageMetadata } = {
