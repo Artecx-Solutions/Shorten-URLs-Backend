@@ -275,13 +275,15 @@ export const createShortLink = async (
 
     const shortCode = customAlias ?? (await generateUniqueShortCode());
     const expiresAt = resolveExpiryDate(expiryDate);
+    const finalAlias = customAlias ?? shortCode;
 
     const passwordHash = password ? await hashPassword(password) : undefined;
 
     const link = await Link.create({
       originalUrl: normalizedUrl,
       shortCode,
-      customAlias: customAlias || undefined,
+      // customAlias: customAlias || undefined,
+      customAlias: finalAlias,
       createdBy: userId,
       expiresAt,
       isActive: true,
@@ -507,6 +509,48 @@ export const getLinkForDelay = async (
     if (Object.keys(metadata).length > 0) result.metadata = metadata;
 
     res.json(result);
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const getMyLinkStats = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const userId = (req as any).user?.sub as string | undefined;
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+
+    const [totalLinks, recentCreated, clicksAgg] = await Promise.all([
+      Link.countDocuments({ createdBy: userId }),
+      Link.countDocuments({ createdBy: userId, createdAt: { $gt: oneHourAgo } }),
+      Link.aggregate([
+        { $match: { createdBy: new (require('mongoose').Types.ObjectId)(userId) } },
+        { $group: { _id: null, totalClicks: { $sum: '$clicks' } } }
+      ])
+    ]);
+
+    const totalClicks = clicksAgg[0]?.totalClicks ?? 0;
+
+    res.json({
+      success: true,
+      stats: {
+        totalLinks,
+        totalClicks,
+        createdInLastHour: recentCreated
+      }
+    });
+  } catch (e) {
+    next(e);
+  }
+};
+
+export const getLinkClicks = async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const { shortCode } = req.params;
+    const link = await Link.findOne({ shortCode }, { shortCode: 1, clicks: 1, _id: 0 });
+    if (!link) return res.status(404).json({ error: 'Link not found' });
+    res.json({ shortCode: link.shortCode, clicks: link.clicks });
   } catch (e) {
     next(e);
   }

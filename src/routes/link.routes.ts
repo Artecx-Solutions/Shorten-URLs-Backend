@@ -7,7 +7,9 @@ import {
   getUserLinks,
   getLinkInfo,
   deleteLink,
-  getLinkForDelay
+  getLinkForDelay,
+  getLinkClicks,
+  getMyLinkStats
 } from '../controllers/link.controller';
 
 const router = Router();
@@ -16,8 +18,11 @@ const router = Router();
 router.post('/', auth(true), createShortLink);
 
 router.get('/my', auth(true), getUserLinks);
+router.get('/my/stats', auth(true), getMyLinkStats);  
 
 router.get('/:shortCode/info', getLinkInfo);
+router.get('/:shortCode/clicks', getLinkClicks); 
+
 router.get('/:shortCode/analytics', auth(true), getLinkAnalytics);
 router.delete('/:shortCode', auth(true), deleteLink);
 
