@@ -8,6 +8,7 @@ import healthRoutes from './routes/health.routes';
 import { errorHandler, notFound } from './middleware/errorHandler';
 import linkRoutes from './routes/link.routes';
 import metadataRoutes from './routes/metadata.routes';
+import adminUsersRoutes from './routes/admin.users.routes';
 
 const app = express();
 
@@ -24,6 +25,7 @@ app.use('/api/health', healthRoutes);
 app.use('/api/auth', authRoutes);
 app.use('/api/links', linkRoutes);
 app.use('/api/metadata', metadataRoutes);
+app.use('/api/admin/users', adminUsersRoutes);
 
 // 404 + error
 app.use(notFound);
